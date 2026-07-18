@@ -20,6 +20,8 @@ For executive-facing content in generated docs: lead with the conclusion/recomme
 
 ## Session Initialization
 
+If you work across multiple machines, run `git pull` first to sync from GitHub before touching any files — starting from a stale state on a secondary machine leads to decisions made on outdated context. Push at the end of every session so the next machine picks up cleanly. Skip this if you only ever work from one machine.
+
 At the start of EVERY new architecture session, read the following files before responding:
 
 1. `docs/question-flow.md` — the phased conversation template
@@ -103,7 +105,7 @@ Generate files in this order (dependencies first):
 7. `docs/DEVELOPMENT_ROADMAP.md` — phased build plan with deliverables, exit criteria, and starting prompts (always for Full Path solutions)
 8. `docs/agents/architect.md` — Tactical Architect skill (always)
 9. `docs/agents/[other-roles].md` — other agent skills as needed
-10. `CLAUDE.md` — project context for the solution repo
+10. `CLAUDE.md` — project context for the solution repo. Include a **Multi-Machine Sync** section (if the user works across multiple machines) and a **Memory Graduation** section (always) — see `knowledge/lessons-learned.md` for both patterns and ready-to-adapt section text
 11. `README.md` — project overview
 12. `SETUP_GUIDE.md` — environment and tool setup
 13. `docs/DEV_LOG.md` — initialized with this session's summary
