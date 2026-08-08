@@ -20,9 +20,9 @@
 <!-- Format:
 
 ### [Pattern Name]
-**Established:** [date, from which solution]
-**Pattern:** [What the pattern is]
-**Applied to:** [Which solutions use it]
+**Established:** [date, from which solution] \
+**Pattern:** [What the pattern is] \
+**Applied to:** [Which solutions use it] \
 **Notes:** [Any caveats or evolution of the pattern]
 
 -->

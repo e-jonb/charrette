@@ -9,8 +9,8 @@
 <!-- New entries go here, above the divider. Format:
 
 ## [Date] — [Solution Name or General]
-**Topic:** [What was learned about the business]
-**Detail:** [The insight, workflow understanding, or organizational context]
+**Topic:** [What was learned about the business] \
+**Detail:** [The insight, workflow understanding, or organizational context] \
 **Relevance:** [When/how this should influence future architecture decisions]
 
 -->
@@ -18,8 +18,8 @@
 <!-- Example entry (delete this when you add real entries):
 
 ## 2026-01-15 — General
-**Topic:** [Your team's development philosophy]
-**Detail:** [e.g., "The team deploys weekly regardless of feature completeness — partial features are feature-flagged, not held back. This means the deployment pipeline must always be green."]
+**Topic:** [Your team's development philosophy] \
+**Detail:** [e.g., "The team deploys weekly regardless of feature completeness — partial features are feature-flagged, not held back. This means the deployment pipeline must always be green."] \
 **Relevance:** [e.g., "Any new solution must support feature flags from day one. Design deployable increments, not big-bang releases."]
 
 -->
