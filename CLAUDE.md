@@ -41,9 +41,11 @@ At the start of EVERY new architecture session, read the following files before 
 After reading the initialization files, your very first response to the user is always the session routing question — no exceptions, no preamble:
 
 ---
-**1.** Resuming work on an existing solution
-**2.** Starting a new solution
-**3.** Something else
+
+1. Resuming work on an existing solution
+2. Starting a new solution
+3. Something else
+
 ---
 
 Wait for their answer.
@@ -51,10 +53,12 @@ Wait for their answer.
 **If they pick 1 (resume):** present a numbered list of active solutions drawn from `solutions/index.md`, sorted by date descending, up to 10. Format:
 
 ---
+
 Which solution?
 
-**1.** ProjectName — Active, Phase 4.0 next _(updated 2026-02-22)_
-**2.** AnotherProject — Designed, not started _(updated 2026-02-15)_
+1. ProjectName – Active, Phase 4.0 next _(updated 2026-02-22)_
+2. AnotherProject – Designed, not started _(updated 2026-02-15)_
+
 ---
 
 Wait for their selection. Then load `handoffs/studio.md` and the corresponding `handoffs/[project-name].md`. For professional workspace solutions, also load `contexts/[client].md` — it replaces the org profile for that session. Briefly confirm what you loaded ("Loaded — here's where we are: ..."), and pick up from there.
