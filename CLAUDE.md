@@ -63,13 +63,52 @@ Which solution?
 
 ---
 
-Wait for their selection. Then load `handoffs/studio.md` and the corresponding `handoffs/[project-name].md`. For professional workspace solutions, also load `contexts/[client].md` — it replaces the org profile for that session. Briefly confirm what you loaded ("Loaded — here's where we are: ..."), and pick up from there.
+Wait for their selection. Then load `handoffs/studio.md` and the corresponding `handoffs/[project-name].md`. For professional workspace solutions, also load `contexts/[client].md` – it replaces the org profile for that session. Run the open MR/PR check below for the selected solution, then briefly confirm what you loaded ("Loaded – here's where we are: ..."), and pick up from there.
 
 **If they pick 2 (new solution):** proceed with Phase 0 (Triage).
 
 **If they pick 3 (something else):** open dialogue — ask what's on their mind. Let the conversation unfold naturally. It may lead back to 1 or 2, or it may stay as a general Q&A, a research question, a knowledge-base update, or a studio-level discussion. Follow wherever it goes.
 
 **Exception:** If the user's opening message already contains a clear project name and resume intent (e.g., "I'm resuming Studio work on ProjectName"), skip the picker and load the handoff directly. For professional workspaces, also load `contexts/[client].md`.
+
+### Open MR/PR Check at Solution Load
+
+Skip this section entirely if you are the only person who ever commits to your solution repos. It exists for shared repos, where being current with `main` is not the same as knowing what is in flight.
+
+**When it fires:** once, immediately after a solution is selected – whether by the picker or by the resume-intent exception – and never on a per-message basis. Not before routing: until the user picks a solution there is nothing to scope the question to, and an unscoped dump of every open request in the group answers a question nobody asked.
+
+**What to run:** the `Repo` column in `solutions/index.md` gives the project path. The command is platform-specific, so fill in whichever applies to you and delete the other:
+
+```bash
+# GitHub
+gh pr list --repo owner/repo --state open
+
+# GitLab
+glab mr list --repo GROUP/project
+```
+
+If your organization wraps VCS access in its own tooling, substitute that command here. Confirm the flags against the tool's own help output rather than assuming they match the examples above.
+
+**Report three states, never two.** The whole point of this check is the quiet result, so the quiet result has to be distinguishable from a check that did not run:
+
+```markdown
+**Open MRs (repo-name):**
+- `branch-name` – opened by Author, N days ago
+
+**No open MRs (repo-name).**
+
+**MR check unavailable (repo-name) – could not reach the API.**
+```
+
+Always name the repo in the line. The user may have several repos open, and an unlabelled clean result cannot be told apart from a clean result about the wrong project.
+
+Print the line every time, in the same visible block as the "Loaded" confirmation. This is not a silent preamble step. A check whose success produces no output is a check nobody notices you skipping, and this one is enforced by the user expecting to see it.
+
+**Never act on what it returns.** List what is open. Do not check out a branch, rebase onto one, or offer to. Same rule as `scripts/sync.sh` and for the same reason: the human who has read the requests decides.
+
+**Before trusting it, watch it fail.** Run it once against a repo with a known open request and confirm the request appears, then once with the network off or the token revoked and confirm you get the unavailable line rather than a confident "No open MRs." A negative result is worth nothing until you have seen the check produce a positive one.
+
+**Why this is an instruction and not a hook.** Two reasons, and neither is about noise. A hook is a shell command, so it cannot reach VCS access delivered through MCP at all. And a `SessionStart` hook fires before the routing answer exists, so it cannot scope to the selected solution – the one thing that makes the output worth reading.
 
 Only load `docs/branding-ui-standards.md` when the solution has a front-end component.
 
