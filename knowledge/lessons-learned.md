@@ -15,6 +15,37 @@
 
 -->
 
+## General – Multi-machine sync: run a sync script, not a bare `git pull`
+**Topic:** Working across two machines needs an explicit pull-at-start / push-at-end habit baked into every repo's CLAUDE.md – and the naive one-line version of that instruction is wrong for any repo with submodules \
+**Detail:** Without a pull-at-start rule written into the repo, AI sessions on a secondary machine silently start from stale state: the AI reads outdated files, makes decisions on them, and the divergence compounds. Putting it in CLAUDE.md rather than in a personal habit means it fires in every session regardless of which machine is in front of you. But the obvious wording – "run `git pull` before starting any work" – is incomplete, and it fails quietly rather than loudly. **`git pull` reporting "Already up to date" is not evidence the working tree is current.** There are two distinct failures and the fix people reach for only addresses one. (A) The working tree is behind the parent's pin: a plain pull moves the parent's gitlink and leaves the submodule checkout where it was. Recursing fixes this. (B) The parent's pin is behind the submodule's *own* origin: someone pushed upstream and never bumped the pointer here. Recursion does **not** fix B – it faithfully checks out whatever the parent pins, so a stale pin gets checked out stale, accurately, forever. Only an explicit pin-versus-origin comparison catches B, and B is the one that bites: a shared knowledge-base submodule can sit months behind its own origin while every consumer reports a clean, successful pull, so consumers keep serving content whose upstream was corrected long ago. The fix is a `scripts/sync.sh` that pulls recursively and then reports any submodule whose pinned commit is behind its origin. `scripts/sync.sh` in this repo is a working reference implementation – copy it into generated repos as-is. \
+**Impact:** Every repo scaffolded through this Studio gets a Multi-Machine Sync section in its CLAUDE.md from day one, plus `scripts/sync.sh`. When retrofitting an existing repo, put the section near the top, before the main workflow instructions, so it is the first thing the AI reads. For a repo with no GitHub remote yet, say so explicitly in the section and give the `gh repo create` command rather than leaving it silent. Private or gitignored content (`_private/` folders, `*.private.md`) cannot sync via git – those files are machine-local by design; accept that or sync those specific folders another way.
+
+**Ready-to-adapt CLAUDE.md section text:**
+
+```markdown
+## Multi-Machine Sync
+
+Run `./scripts/sync.sh` before starting any work – not a bare `git pull`.
+This repo is used across multiple machines, and a plain `git pull` can
+report "Already up to date" while a submodule sits months behind its own
+upstream. The script pulls recursively and reports any submodule whose
+pinned commit is behind its origin.
+
+At the end of every session, ensure all work is committed and pushed
+(`git push origin main`) so the other machine picks up cleanly. If you
+changed anything inside a submodule, push there first, then bump and
+commit the pointer here – pushing the parent alone leaves the other
+machine pointing at a commit it cannot fetch.
+```
+
+For a repo with **no submodules**, a one-line `git pull` instruction is still correct – but prefer the script anyway if the repo might ever gain one, so the instruction never has to change again. `scripts/sync.sh` handles the no-submodule case by treating the pull as the whole job.
+
+**Three rules that go with it:**
+
+- **Recurse explicitly in the script**, rather than relying on a `submodule.recurse` git config setting. Config is invisible state that does not travel with the repo – a fresh clone, another machine, or a successor maintainer will not have it.
+- **The drift check reports; it never auto-bumps.** Bumping a pointer is a content change to the parent repo, and if that parent deploys anything, it changes what users see. A human who has read the missing commits decides.
+- **Record the reason next to any deliberate pin.** "Intentionally pinned" and "drifted and nobody noticed" are indistinguishable from the outside, and that ambiguity is what lets a stale dependency sit unnoticed for months.
+
 ## General — Memory graduation: promote durable auto-memory into committed docs
 **Topic:** Claude Code's per-project auto-memory (`~/.claude/projects/<repo>/memory/`) is local application state — invisible to git, doesn't sync across your own machines, and invisible to anyone who clones a repo fresh, including a successor who inherits a project \
 **Detail:** Auto-memory accumulates genuinely useful knowledge across sessions — confirmed-working patterns, project decisions and their rationale, institutional facts about how a project operates. But it's trapped on whichever machine wrote it. The fix: at the end of a significant work session (or on request), review what got saved to auto-memory that session. Graduate anything that's a confirmed-working pattern or playbook, a project decision plus its reasoning, or an institutional fact a future maintainer needs — write it into the repo's committed docs too, in addition to the memory file, not instead of it. Leave local-only anything that's a personal interaction preference (tone, communication style) or about the human-AI relationship rather than the project. Destination depends on length: short, stable operating rules go straight into CLAUDE.md near the related section; longer-form patterns or multi-step playbooks go into `docs/PLAYBOOK.md` (or whatever this repo's existing equivalent is called — check before assuming one doesn't exist). When something graduates, append a note to the source memory entry — "Graduated to CLAUDE.md on [date]; that file is now authoritative" — so a later edit to CLAUDE.md doesn't leave a stale, contradicting copy sitting in memory with no signal it's been superseded. \
