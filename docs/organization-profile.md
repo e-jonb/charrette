@@ -97,11 +97,18 @@ Fill in your preferred technologies. These become the Studio's defaults — it w
 - **AI tools in use:** [Which AI coding tools — e.g., Claude Code, Cursor, Gemini CLI, Copilot]
 - **Other tools:** [IDEs, project management, communication]
 
-### GitHub Organization
+### Version Control Platform
 
+Fill this in once. Everything else in charrette is platform-free and reads its vendor-specific values from here, so adopting a different host is an edit to this section rather than a hunt through the repo.
+
+- **Platform:** [GitHub / GitLab / Bitbucket / other]
+- **Create a remote:** [`gh repo create` / `glab repo create` / your equivalent]
+- **List open PRs/MRs:** [`gh pr list --repo owner/repo --state open` / `glab mr list --repo GROUP/project`. If your organization wraps VCS access in its own tooling, put that command here and confirm the flags against its help output]
+- **Review template path:** [`.github/PULL_REQUEST_TEMPLATE.md` / `.gitlab/merge_request_templates/Default.md`]
+- **CI config:** [`.github/workflows/` / `.gitlab-ci.yml`]
 - **Repo naming convention:** [e.g., lowercase with hyphens: `project-name`]
 - **Branch naming convention:** [e.g., `feat/[name]`, `fix/[name]`, `chore/[name]`]
-- **PR requirements:** [e.g., one approval required, self-review for solo]
+- **Review requirements:** [e.g., one approval required, self-review for solo]
 - **Default branch:** [e.g., `main`]
 
 ### Communication Style

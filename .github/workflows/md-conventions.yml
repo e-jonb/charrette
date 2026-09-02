@@ -1,14 +1,21 @@
 name: Markdown conventions
 
+# Calls scripts/md-conventions.py rather than reimplementing its rules. An
+# earlier version inlined the detection logic here and carried a note saying
+# "if the rules change, update both" - two implementations of one rule, free
+# to disagree, in the layer whose entire job is catching what the local hook
+# missed. The checker is committed in this repo, so CI can just run it.
+#
 # Diff-scoped on purpose. A repo can carry many pre-existing em dashes, so a
 # whole-repo check would fail on day one and get switched off. This only
 # looks at lines ADDED by the push or PR.
 #
-# This mirrors scripts/md-conventions.py, which is what the local Claude Code
-# hook runs (.claude/hooks/md-conventions.sh). CI runs in a fresh checkout
-# where a hook-driven fix never touched the files, so it re-implements the same
-# detection logic inline rather than depending on it living anywhere in
-# particular. If the rules change, update both.
+# Exit codes from the checker: 0 clean, 1 hard breaks (fails the job), 2 em
+# dashes only (reported, does not fail - an em dash may be quoted source
+# material, which is a human call).
+#
+# The GitLab equivalent is in templates/ci/. Exactly one CI file should be
+# live in a given repo: one that cannot run still looks like coverage.
 
 on:
   push:
@@ -46,83 +53,34 @@ jobs:
           fi
 
       - name: Check markdown conventions
+        env:
+          BASE: ${{ steps.base.outputs.sha }}
         run: |
-          python3 - "${{ steps.base.outputs.sha }}" <<'PY'
-          import re, subprocess, sys
+          set -uo pipefail
 
-          base = sys.argv[1] if len(sys.argv) > 1 else ''
-          if not base:
-              print('No base commit (initial push); skipping.')
-              sys.exit(0)
+          if [ -z "$BASE" ]; then
+            echo "No base commit (initial push); skipping."
+            exit 0
+          fi
 
-          META  = re.compile(r'^\*\*[^*\n]+:\*\*')
-          FENCE = re.compile(r'^\s{0,3}(```|~~~)')
-          INLINE = re.compile(r'`[^`]*`')
+          # Say what was examined. Without this line a misconfigured job and a
+          # genuinely clean one are both just a green check, and a check whose
+          # zero is invisible is a check nobody notices has stopped working.
+          files=$(git diff --name-only --diff-filter=ACM "$BASE" HEAD -- '*.md')
+          count=$(printf '%s' "$files" | grep -c . || true)
+          echo "Examined $count changed markdown file(s) against $BASE."
 
-          files = subprocess.run(
-              ['git', 'diff', '--name-only', '--diff-filter=ACM', base, 'HEAD'],
-              capture_output=True, text=True).stdout.split()
-          files = [f for f in files if f.endswith('.md')]
+          if [ "$count" -eq 0 ]; then
+            exit 0
+          fi
+          printf '  %s\n' $files
 
-          def added(path):
-              d = subprocess.run(['git','diff','-U0',base,'HEAD','--',path],
-                                 capture_output=True, text=True).stdout
-              out, cur = set(), 0
-              for line in d.split('\n'):
-                  m = re.match(r'^@@ -\S+ \+(\d+)', line)
-                  if m: cur = int(m.group(1)); continue
-                  if line.startswith('+') and not line.startswith('+++'):
-                      out.add(cur); cur += 1
-                  elif not line.startswith('-') and not line.startswith('\\'):
-                      cur += 1
-              return out
+          python3 scripts/md-conventions.py --added-lines "$BASE" $files
+          status=$?
 
-          breaks, dashes = [], []
-          for f in files:
-              try:
-                  lines = open(f, encoding='utf-8').read().split('\n')
-              except OSError:
-                  continue
-              scope = added(f)
-
-              fenced, inf, mark = [False]*len(lines), False, None
-              for i, l in enumerate(lines):
-                  m = FENCE.match(l)
-                  if m:
-                      fenced[i] = True
-                      if not inf: inf, mark = True, m.group(1)
-                      elif l.strip().startswith(mark): inf, mark = False, None
-                      continue
-                  fenced[i] = inf
-
-              is_meta = [not fenced[i] and bool(META.match(l)) for i, l in enumerate(lines)]
-              i = 0
-              while i < len(lines):
-                  if not is_meta[i]: i += 1; continue
-                  j = i
-                  while j+1 < len(lines) and is_meta[j+1]: j += 1
-                  if j > i:
-                      for k in range(i, j):
-                          if not (lines[k].endswith('\\') or lines[k].endswith('  ')):
-                              if (k+1) in scope:
-                                  breaks.append(f'{f}:{k+1}: {lines[k].strip()[:70]}')
-                  i = j + 1
-
-              for i, l in enumerate(lines):
-                  if fenced[i] or l.lstrip().startswith('>'): continue
-                  if (i+1) in scope and '—' in INLINE.sub('', l):
-                      dashes.append(f'{f}:{i+1}: {l.strip()[:70]}')
-
-          # Em dashes warn but do not fail: they may be quoted source material,
-          # which is a human call. Hard breaks always fail; they are unambiguous.
-          for d in dashes:
-              print(f'::warning file={d.split(":")[0]},line={d.split(":")[1]}::em dash on an added line - house style is en dash (–), unless quoting source')
-
-          if breaks:
-              for b in breaks:
-                  print(f'::error file={b.split(":")[0]},line={b.split(":")[1]}::consecutive **Label:** lines render joined - append " \\" to all but the last')
-              print(f'\n{len(breaks)} hard-break violation(s) on added lines.')
-              sys.exit(1)
-
-          print(f'OK. {len(dashes)} em dash warning(s), 0 hard-break errors.')
-          PY
+          case "$status" in
+            0) echo "Clean." ;;
+            2) echo "Em dash findings on added lines - house style is en dash (–), unless quoting source. Not failing the build." ;;
+            *) echo "Hard-break violations on added lines. Append ' \\' to all but the last line of each metadata run." >&2
+               exit 1 ;;
+          esac

@@ -204,7 +204,7 @@ Additional ADRs as needed for significant choices (state management, caching str
 
 ### Phase 4: Development Strategy
 
-**Goal:** Define how the work will be executed — phasing, agent roles (including both architect levels), parallel work boundaries, and GitHub structure.
+**Goal:** Define how the work will be executed – phasing, agent roles (including both architect levels), parallel work boundaries, and repository structure.
 
 ### Questions:
 
@@ -225,12 +225,12 @@ Additional ADRs as needed for significant choices (state management, caching str
 5. **"Which coding tool do you plan to use primarily for each type of work?"**
    - Map tools to roles (e.g., Claude Code for architecture-sensitive work, other tools for specific domain work)
 
-#### GitHub Structure
-6. **"For GitHub, I'll include the standard repo setup. Any naming conventions or org-level patterns I should follow?"**
-   - Cross-reference with org context: existing GitHub conventions
+#### Repository Structure
+6. **"I'll include the standard repo setup. Any naming conventions or org-level patterns I should follow?"**
+   - Cross-reference with org context: the Version Control Platform section holds the host, naming conventions, and review requirements
    - Branch naming: `feat/[feature-name]`, `fix/[issue-name]`, `chore/[task-name]`
-   - PR-based merges to `main`
-   - Protected `main` branch (when CI/CD is added)
+   - PR/MR-based merges to `main`
+   - Protected `main` branch (when CI is added)
 7. **"Any existing repo templates or patterns from other projects we should stay consistent with?"**
 
 ### Phase Gate:
@@ -255,7 +255,7 @@ Additional ADRs as needed for significant choices (state management, caching str
 > **Architecture Decisions:** [count] ADRs recorded
 > **Development Phases:** [phase summary]
 > **Agent Roles:** [roles and tools — including Tactical Architect for CLI]
-> **GitHub Setup:** [branch strategy and structure]
+> **Repo Setup:** [branch strategy and structure]
 > **Org Constraints Applied:** [relevant items from org context]
 >
 > Ready to generate? Or do you want to adjust anything?"
@@ -279,7 +279,7 @@ Once confirmed, write the following files directly to the target solution direct
 - `docs/CODING_STANDARDS.md` — Language/framework conventions, linting rules, naming patterns
 - `CLAUDE.md` — Project-level context file for Claude Code CLI sessions (includes org context subset)
 - `README.md` — Project README with setup, architecture overview, and team conventions
-- `.github/PULL_REQUEST_TEMPLATE.md` — Standardized PR template
+- The review template, at the path named in the org profile – standardized PR/MR template
 
 **Agent Skill Files (in `docs/agents/`):**
 - `architect.md` — **Always generated.** The Tactical Architect agent for CLI use. Includes the escalation guide for when to return to the Studio.
@@ -296,7 +296,7 @@ Once confirmed, write the following files directly to the target solution direct
 **Step 3: Report what was created** — list all files written and a brief summary.
 
 **Step 4: Offer to initialize Git:**
-> "Want me to initialize Git, make the first commit, and create the GitHub repo? (Requires `gh` CLI for remote repo creation.)"
+> "Want me to initialize Git, make the first commit, and create the remote repo? (Uses the create-a-remote command from your org profile — `gh` on GitHub, `glab` on GitLab.)"
 
 ### Output Format Note:
 All files are written directly to disk as markdown, structured in the standard repo layout. The SETUP_GUIDE.md should include tool-specific instructions for the coding tools you use (Claude Code, Gemini CLI, Codex CLI, Cursor, VS Code, etc.).
@@ -326,7 +326,7 @@ If yes, edit `docs/organization-profile.md` directly.
 > "Your solution is ready at `[target directory]`. Next steps:
 > 1. `cd [target directory]` and review the generated files
 > 2. If you didn't already, run `git init && git add . && git commit -m 'Initial architecture scaffold'`
-> 3. Create the GitHub repo and push
+> 3. Create the remote repo and push
 > 4. Follow SETUP_GUIDE.md to set up your dev environment
 > 5. Start coding using the agent skill definitions in `docs/agents/`
 >

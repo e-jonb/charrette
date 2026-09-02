@@ -84,7 +84,7 @@ When you complete an architecture session, charrette writes a complete solution 
 | `SETUP_GUIDE.md` | Environment setup instructions |
 | `docs/DEV_LOG.md` | Initialized with the architecture session summary |
 | `docs/TECH_DEBT.md` | Known deferred items |
-| `.github/PULL_REQUEST_TEMPLATE.md` | PR template |
+| review template (path per your platform) | PR/MR template |
 
 ---
 

@@ -1,0 +1,62 @@
+# Markdown conventions check for GitLab CI.
+#
+# HOW TO USE THIS: copy the `md-conventions` job below into your repo's
+# .gitlab-ci.yml (or make this file your .gitlab-ci.yml if you have no other
+# jobs yet), then DELETE .github/ from your repo. Exactly one CI config
+# should be live: a workflow that cannot run on your platform still looks
+# like coverage, and a check that looks like coverage but never fires is
+# worse than no check at all.
+#
+# This calls scripts/md-conventions.py rather than reimplementing its rules,
+# so the local hook and CI can never drift into disagreeing about what the
+# rules are.
+#
+# Diff-scoped on purpose. A repo can carry many pre-existing em dashes, so a
+# whole-repo check would fail on day one and get switched off. This only
+# looks at lines ADDED by the merge request.
+#
+# Exit codes from the checker: 0 clean, 1 hard breaks (fails the job), 2 em
+# dashes only (reported, does not fail - an em dash may be quoted source
+# material, which is a human call).
+
+md-conventions:
+  image: python:3-alpine
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: ['**/*.md']
+  variables:
+    # Full history: the diff base has to be reachable.
+    GIT_DEPTH: 0
+  before_script:
+    - apk add --no-cache git bash
+  script:
+    - |
+      set -uo pipefail
+
+      BASE="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"
+      if [ -z "$BASE" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+        echo "No usable merge-request diff base; skipping."
+        exit 0
+      fi
+
+      # Say what was examined. Without this line a misconfigured job and a
+      # genuinely clean one are both just a green pipeline, and a check whose
+      # zero is invisible is a check nobody notices has stopped working.
+      files=$(git diff --name-only --diff-filter=ACM "$BASE" HEAD -- '*.md')
+      count=$(printf '%s' "$files" | grep -c . || true)
+      echo "Examined $count changed markdown file(s) against $BASE."
+
+      if [ "$count" -eq 0 ]; then
+        exit 0
+      fi
+      printf '  %s\n' $files
+
+      python3 scripts/md-conventions.py --added-lines "$BASE" $files
+      status=$?
+
+      case "$status" in
+        0) echo "Clean." ;;
+        2) echo "Em dash findings on added lines - house style is en dash, unless quoting source. Not failing the pipeline." ;;
+        *) echo "Hard-break violations on added lines. Append ' \\' to all but the last line of each metadata run." >&2
+           exit 1 ;;
+      esac

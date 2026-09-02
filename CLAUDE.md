@@ -36,17 +36,19 @@ This only affects runs of bold-label lines at column 0. List items (`- **X:**`),
 
 The failure is silent, which is why it needs a rule. Nothing errors, nothing looks wrong in source, and the damage only appears in the rendered view that whoever you wrote the doc for is the one reading.
 
-**Enforcement.** `scripts/md-conventions.py` is the checker. A `PostToolUse` hook in `.claude/settings.json` runs it on every markdown file the architect writes: hard breaks are fixed automatically, em dashes are reported back so they get judged case by case rather than blindly rewritten. Both are scoped to lines that actually changed, so adopting this in a repo full of legacy markdown does not bury you on day one. `.github/workflows/md-conventions.yml` repeats the check on added lines in CI.
+**Enforcement.** `scripts/md-conventions.py` is the checker. A `PostToolUse` hook in `.claude/settings.json` runs it on every markdown file the architect writes: hard breaks are fixed automatically, em dashes are reported back so they get judged case by case rather than blindly rewritten. Both are scoped to lines that actually changed, so adopting this in a repo full of legacy markdown does not bury you on day one. CI repeats the check on added lines; the config lives at whatever path your platform uses, named in the org profile.
 
 Scoping lives in the checker, never in the hook. The hook file gets copied into every repo that adopts this, so any behavior kept there goes stale the moment the rules change – and a stale copy that scopes nothing reports every pre-existing finding in a file you touched one line of, which is how a convention checker gets switched off. Keep the hook free of behavior.
 
-Everything is committed and nothing is per-machine. A clone gets the rules, the checker, and the hook registration together. The one thing that does not travel is CI: the workflow is GitHub Actions, so on GitLab or elsewhere you need an equivalent job running the same checker.
+Everything is committed and nothing is per-machine. A clone gets the rules, the checker, and the hook registration together. The only per-user step is approving the hook the first time, which should stay: a repo that silently runs code on clone is the worse failure.
+
+CI is the one piece that is platform-specific, and it is the piece that matters most on a shared repo, because the hook only sees files the architect writes. Anything hand-edited in an IDE or a web editor is caught by CI or not at all. `.github/workflows/md-conventions.yml` is live here; `templates/ci/` holds the equivalent for other platforms. Exactly one is ever live in a given repo – a CI file that cannot run still looks like coverage.
 
 For executive-facing content in generated docs: lead with the conclusion/recommendation first, then provide context, next steps, risks, and any asks. Keep it tight. If you use acronyms, give the spelled-out meaning at the beginning.
 
 ## Session Initialization
 
-If you work across multiple machines, run `./scripts/sync.sh` first to sync from GitHub before touching any files – starting from a stale state on a secondary machine leads to decisions made on outdated context. Push at the end of every session so the next machine picks up cleanly. Skip this if you only ever work from one machine.
+If you work across multiple machines, run `./scripts/sync.sh` first to sync from your remote before touching any files – starting from a stale state on a secondary machine leads to decisions made on outdated context. Push at the end of every session so the next machine picks up cleanly. Skip this if you only ever work from one machine.
 
 Use the script rather than a bare `git pull`: in a repo with submodules, `git pull` can report "Already up to date" while a submodule sits months behind its own upstream. See the Multi-Machine Sync entry in `knowledge/lessons-learned.md` for why, and for the section text to put in each generated repo's CLAUDE.md.
 
@@ -101,17 +103,7 @@ Skip this section entirely if you are the only person who ever commits to your s
 
 **When it fires:** once, immediately after a solution is selected – whether by the picker or by the resume-intent exception – and never on a per-message basis. Not before routing: until the user picks a solution there is nothing to scope the question to, and an unscoped dump of every open request in the group answers a question nobody asked.
 
-**What to run:** the `Repo` column in `solutions/index.md` gives the project path. The command is platform-specific, so fill in whichever applies to you and delete the other:
-
-```bash
-# GitHub
-gh pr list --repo owner/repo --state open
-
-# GitLab
-glab mr list --repo GROUP/project
-```
-
-If your organization wraps VCS access in its own tooling, substitute that command here. Confirm the flags against the tool's own help output rather than assuming they match the examples above.
+**What to run:** the command from **List open PRs/MRs** in the org profile's Version Control Platform section, with the project path from the `Repo` column in `solutions/index.md`. That section is the single place any vendor-specific command lives; do not hardcode one here.
 
 **Report three states, never two.** The whole point of this check is the quiet result, so the quiet result has to be distinguishable from a check that did not run:
 
@@ -163,7 +155,7 @@ This is the key difference from a browser-based chat. Instead of generating down
 2. **Create the complete directory structure** in the target location.
 3. **Write all files** — populated with the actual decisions from the session, not templates with placeholders.
 4. **Report what was created** — list the files and a brief summary.
-5. **Offer to initialize Git** — `git init`, initial commit, and optionally create the GitHub repo if they have `gh` CLI installed.
+5. **Offer to initialize Git** – `git init`, initial commit, and optionally create the remote using the command in the org profile's Version Control Platform section.
 
 ### File Generation Order:
 Generate files in this order (dependencies first):
@@ -181,7 +173,7 @@ Generate files in this order (dependencies first):
 12. `SETUP_GUIDE.md` — environment and tool setup
 13. `docs/DEV_LOG.md` — initialized with this session's summary
 14. `docs/TECH_DEBT.md` — initialized with known deferred items
-15. `.github/PULL_REQUEST_TEMPLATE.md` — PR template
+15. The review template, at the path named in the org profile – `.github/PULL_REQUEST_TEMPLATE.md` on GitHub, `.gitlab/merge_request_templates/Default.md` on GitLab
 16. `scripts/md-conventions.py`, `.claude/hooks/md-conventions.sh`, and a `PostToolUse` entry in `.claude/settings.json` – copy all three from this repo verbatim, and mark the hook executable. Add a short Markdown Conventions section to the solution's `CLAUDE.md` stating the two rules; point at the checker for enforcement rather than restating how it works. Without this the silent-join bug starts over in every repo you generate, and the architect working there has no way to know the rule exists
 
 ## Ongoing Development Sessions

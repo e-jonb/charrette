@@ -10,7 +10,7 @@
 
 [Note the current state of the studio — e.g., "Fully configured and ready to use." or "Organization profile not yet filled in."]
 
-GitHub: [your repo URL, once created]
+Remote: [your repo URL, once created]
 
 ---
 
