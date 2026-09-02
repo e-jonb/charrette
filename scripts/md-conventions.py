@@ -24,6 +24,20 @@ Two checks, deliberately handled differently:
 Usage:
     md-conventions.py [--fix] [--quiet] FILE...
     md-conventions.py --added-lines BASE_REF FILE...   # CI, diff-scoped
+    md-conventions.py --no-scope FILE...               # whole file, deliberately
+
+SCOPING IS THE DEFAULT, and it lives here rather than in the caller. With no
+--added-lines, a tracked file is scoped to its diff against HEAD; an untracked
+file is entirely new so everything in it is reported.
+
+That default is not an optimization. The scoping logic used to live in the
+hook shim, which is *copied* into every repo that adopts this. Centralizing
+the rules here while leaving the scoping in the shim meant a fix to the shim
+never reached the copies, and repos running older shims checked whole files
+and dumped pre-existing findings their author had never touched - which is
+how a convention checker gets switched off. Callers can now forget the flag,
+drift, or be years old and still behave correctly. Do not move this back
+into the shim.
 
 Exit codes:
     0  clean (or --fix resolved everything auto-fixable)
@@ -144,6 +158,12 @@ def main():
         idx = argv.index('--added-lines')
         base_ref = argv[idx + 1]
         argv = argv[:idx] + argv[idx + 2:]
+    elif '--no-scope' not in argv:
+        # Default, not an optimization. See the module docstring: callers that
+        # forget - including stale copies of the hook shim - must still scope
+        # correctly. added_line_numbers() returns None for an untracked file,
+        # which correctly means "all of it is new, report everything".
+        base_ref = 'HEAD'
     paths = [Path(a) for a in argv if not a.startswith('--')]
 
     fixed_count = 0

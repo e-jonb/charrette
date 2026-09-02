@@ -30,18 +30,14 @@ esac
 checker="${CLAUDE_PROJECT_DIR}/scripts/md-conventions.py"
 [ -f "$checker" ] || exit 0
 
-# Scope reporting to what actually changed. If the file is tracked, only lines
-# differing from HEAD are considered "just written" - otherwise editing one line
-# of a legacy doc would dump every pre-existing em dash in it. Untracked files
-# are new, so everything in them is fair game.
-scope_args=()
-if git -C "$(dirname "$file_path")" ls-files --error-unmatch "$file_path" \
-     >/dev/null 2>&1; then
-  scope_args=(--added-lines HEAD)
-fi
-
-python3 "$checker" --fix --quiet "${scope_args[@]}" "$file_path" \
-  2>/tmp/md-conventions-hook.err
+# Scoping is NOT passed from here. The checker defaults to diffing a tracked
+# file against HEAD, so only lines just written are reported and legacy content
+# is left alone. That default deliberately lives in the checker: this file is
+# COPIED into each repo that adopts the convention, so any behavior kept here
+# drifts out of date the moment the rules change, and an old copy that scopes
+# nothing dumps pre-existing findings the author never touched. Keep this file
+# free of behavior so a years-old copy still does the right thing.
+python3 "$checker" --fix --quiet "$file_path" 2>/tmp/md-conventions-hook.err
 status=$?
 
 # Exit 2 surfaces stderr to Claude as feedback it can act on. Only em dash

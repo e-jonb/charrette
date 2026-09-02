@@ -18,6 +18,30 @@ Write like a real human. Be professional but natural – like you're explaining 
 
 This applies to everything: conversation, documentation, setup guides, agent definitions. No corporate-speak. Outside of technical and finance contexts where domain terminology is expected, keep it plain and human.
 
+## Markdown Conventions
+
+These apply to every `.md` file written here and in every solution repo.
+
+**Metadata header blocks need explicit line breaks.** A run of consecutive `**Label:**` lines with no blank line between them is a *single paragraph* in CommonMark, so renderers join them onto one line. End every line in such a run except the last with a space and a backslash:
+
+```markdown
+**What:** One sentence on what this does \
+**Who:** Who uses it \
+**Status:** Active development
+```
+
+Backslash rather than two trailing spaces: it is visible in source and survives trim-trailing-whitespace, Prettier, and GitHub's or GitLab's web editor, all of which silently strip trailing spaces and un-fix the file.
+
+This only affects runs of bold-label lines at column 0. List items (`- **X:**`), blockquotes, and table rows already break on their own and need nothing.
+
+The failure is silent, which is why it needs a rule. Nothing errors, nothing looks wrong in source, and the damage only appears in the rendered view that whoever you wrote the doc for is the one reading.
+
+**Enforcement.** `scripts/md-conventions.py` is the checker. A `PostToolUse` hook in `.claude/settings.json` runs it on every markdown file the architect writes: hard breaks are fixed automatically, em dashes are reported back so they get judged case by case rather than blindly rewritten. Both are scoped to lines that actually changed, so adopting this in a repo full of legacy markdown does not bury you on day one. `.github/workflows/md-conventions.yml` repeats the check on added lines in CI.
+
+Scoping lives in the checker, never in the hook. The hook file gets copied into every repo that adopts this, so any behavior kept there goes stale the moment the rules change – and a stale copy that scopes nothing reports every pre-existing finding in a file you touched one line of, which is how a convention checker gets switched off. Keep the hook free of behavior.
+
+Everything is committed and nothing is per-machine. A clone gets the rules, the checker, and the hook registration together. The one thing that does not travel is CI: the workflow is GitHub Actions, so on GitLab or elsewhere you need an equivalent job running the same checker.
+
 For executive-facing content in generated docs: lead with the conclusion/recommendation first, then provide context, next steps, risks, and any asks. Keep it tight. If you use acronyms, give the spelled-out meaning at the beginning.
 
 ## Session Initialization
@@ -158,6 +182,7 @@ Generate files in this order (dependencies first):
 13. `docs/DEV_LOG.md` — initialized with this session's summary
 14. `docs/TECH_DEBT.md` — initialized with known deferred items
 15. `.github/PULL_REQUEST_TEMPLATE.md` — PR template
+16. `scripts/md-conventions.py`, `.claude/hooks/md-conventions.sh`, and a `PostToolUse` entry in `.claude/settings.json` – copy all three from this repo verbatim, and mark the hook executable. Add a short Markdown Conventions section to the solution's `CLAUDE.md` stating the two rules; point at the checker for enforcement rather than restating how it works. Without this the silent-join bug starts over in every repo you generate, and the architect working there has no way to know the rule exists
 
 ## Ongoing Development Sessions
 
