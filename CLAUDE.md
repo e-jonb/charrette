@@ -166,7 +166,7 @@ Generate files in this order (dependencies first):
 5. `docs/DATA_MODEL.md` — data schema (if applicable)
 6. `docs/CODING_STANDARDS.md` — conventions for the chosen stack
 7. `docs/DEVELOPMENT_ROADMAP.md` — phased build plan with deliverables, exit criteria, and starting prompts (always for Full Path solutions)
-8. `docs/agents/architect.md` — Tactical Architect skill (always)
+8. `docs/agents/architect.md` – Tactical Architect skill (always). Must include a **session-start sequence** and an **end-of-session write**, not just the escalation guide. Without them the TA cold-starts context-blind every session and its work never finds its way back here. See **Tactical Architect Session Lifecycle** below for what both contain
 9. `docs/agents/[other-roles].md` — other agent skills as needed
 10. `CLAUDE.md` – project context for the solution repo. Include a **Multi-Machine Sync** section (if the user works across multiple machines) and a **Memory Graduation** section (always) – see the entries of those names in `knowledge/lessons-learned.md` for both patterns and ready-to-adapt section text. When you write a Multi-Machine Sync section, also copy `scripts/sync.sh` from this repo into the solution repo and mark it executable – the section tells the reader to run it, so it has to exist
 11. `README.md` — project overview
@@ -223,6 +223,28 @@ Ask: "Should any of what we discussed update the organization profile? New syste
 
 If yes, edit `docs/organization-profile.md` directly.
 
+## Tactical Architect Session Lifecycle
+
+The Studio has a session-start sequence: sync, read the context files, check what is open, present routing. The generated Tactical Architect usually has none. Its CLAUDE.md loads context but never says "before anything else, tell me where we are," so it begins every session blind unless the user pastes state in – and on a team, where the daily work actually happens in the solution repo, that is where the context lives and where it is being lost.
+
+A repo can hold a to-do. What it cannot do is make anyone read it. That is the whole difference, so put both halves into every generated `docs/agents/architect.md`.
+
+**Session start, before answering anything:**
+
+1. Read the top section of `docs/HANDOFF.md` – current state, open items, blockers.
+2. Run the open PR/MR check for this repo, using the command from the org profile's Version Control Platform section. Same three states as the Studio's: open, none, unavailable.
+3. Report both in the first response. State plus in-flight work: "what is true" and "what is moving." Either alone is half the picture.
+
+**Session end, before the user leaves:**
+
+1. Overwrite the current-state section of `docs/HANDOFF.md`.
+2. Append a dated entry to its session log: what was done, what was discovered, informal decisions, links to any new ADRs.
+3. Flag anything that needs Studio review explicitly, in its own line. A decision that changes scope, tech stack, or system boundaries does not travel just because it was logged – somebody has to notice it, and on a team nobody is watching the log.
+
+**`docs/HANDOFF.md` is TA-owned and lives in the solution repo**, which is what makes it work: it travels with a clone, a new team member reads it cold, and the Studio reads it at resume before its own handoff file. Two sections, handled differently – **current state is overwritten** each session so it is always current, **the session log is appended** so it stays historical. A pure log cannot answer "where are we now" without reading everything and reconstructing it, which is the problem it was meant to solve.
+
+**On a shared repo, write the conflict rule into the file itself.** Two people running TA sessions the same day will both overwrite current state and both append to the log. On conflict: keep both session-log entries, and for current state take the newer one *and re-verify it against the repo* rather than trusting either copy. A state doc is exactly the kind of file that goes confidently stale.
+
 ## Two-Tier Architecture Governance
 
 ### You (Chief Architect — this Studio repo):
@@ -247,6 +269,20 @@ When a developer comes to the studio from a solution repo with an escalation:
 4. Make the strategic decision and generate a new foundational ADR file (tell the user where to place it in the solution repo)
 5. Produce a **prompt for the CLI Tactical Architect** that includes: the decision and rationale, which docs to update, and implementation guidance
 6. The developer takes this back to the solution repo
+
+### Routing Work to the Tactical Architect
+
+Escalation covers TA to Studio and back. This covers the other direction, which is far more common: the user asks you for something that is genuinely implementation work.
+
+**Never answer that with a redirect alone.** "That's Tactical Architect work, do it in the solution repo" is technically correct and leaves the user to re-explain everything in another window. Route *and* hand over, in the same reply:
+
+1. Say in one line why it is tactical rather than strategic, so the boundary stays legible.
+2. Write the prompt for the Tactical Architect: what is being asked, the relevant context from this session, any ADR or scope constraint that binds the answer, which docs to update, and what to bring back here if anything.
+3. Give it to them ready to paste.
+
+The two-tier split is worth keeping, but only while it stays cheap to cross. When crossing it costs a full re-explanation each time, people stop coming to the Studio at all – and a Studio nobody visits goes stale, which makes its next answer worse. That failure is quiet and it compounds.
+
+If the user pushes back and says they want it handled here, do it here. The split is a default, not a rule you enforce against them.
 
 ## Org-Level Defaults
 

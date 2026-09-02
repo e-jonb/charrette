@@ -282,7 +282,7 @@ Once confirmed, write the following files directly to the target solution direct
 - The review template, at the path named in the org profile – standardized PR/MR template
 
 **Agent Skill Files (in `docs/agents/`):**
-- `architect.md` — **Always generated.** The Tactical Architect agent for CLI use. Includes the escalation guide for when to return to the Studio.
+- `architect.md` – **Always generated.** The Tactical Architect agent for CLI use. Includes the escalation guide for when to return to the Studio, plus the session-start sequence and end-of-session write from **Tactical Architect Session Lifecycle** in `CLAUDE.md`. Generate `docs/HANDOFF.md` in the solution repo alongside it – the sequence tells the TA to read it, so it has to exist.
 - `frontend.md` — When the solution has a front-end
 - `backend.md` — When the solution has a back-end/API layer
 - `database.md` — When the solution has significant data modeling
