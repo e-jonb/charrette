@@ -153,12 +153,26 @@ This is the key difference from a browser-based chat. Instead of generating down
 
 1. **Ask for the solution name and target directory.** Default suggestion: `~/projects/[solution-name]` (or ask where they keep their repos).
 2. **Create the complete directory structure** in the target location.
-3. **Write all files** — populated with the actual decisions from the session, not templates with placeholders.
-4. **Report what was created** — list the files and a brief summary.
-5. **Offer to initialize Git** – `git init`, initial commit, and optionally create the remote using the command in the org profile's Version Control Platform section.
+3. **Move any source data in** – see item 0 of the File Generation Order. Anything the solution is built from belongs in the repo before the files that reference it get written.
+4. **Write all files** – populated with the actual decisions from the session, not templates with placeholders.
+5. **Report what was created** – list the files and a brief summary.
+6. **Offer to initialize Git** – `git init`, initial commit, and optionally create the remote using the command in the org profile's Version Control Platform section.
 
 ### File Generation Order:
 Generate files in this order (dependencies first):
+
+**0. Source data moves into the repo. It is output, not a reference.** If the solution is built from something that already exists – an export from the tool it replaces, a spreadsheet, a corpus, scans, photographs, a prior system's files – copy or move it into the new repo before writing anything else, at `docs/seed/` (or a name that fits the path), with a README saying where each file came from, which parts hold real data, and which are empty templates. Then have every other generated file point at that in-repo path.
+
+**Never write an absolute path into the user's home directory as a solution's dependency.** A generated repo cannot verify a path outside itself, cannot back it up, and cannot tell when it stops being true. The folder holding the source material is also, reliably, the folder nobody is backing up – a downloads folder, a desktop, something named for temporary use – precisely because the material arrived there and was never given a home. Cite it by absolute path and the repo will go on asserting a dependency that quietly stopped existing.
+
+Three things to get right while doing it:
+
+- **Read the files before trusting the pointer.** Whatever path has been quoted at you may name a subdirectory when the real dependency is its parent, or name a folder when half of what matters sits beside it. Acting on the recorded path rather than the actual contents is how a real input gets destroyed by work that looks careful.
+- **Say in the README which files are real.** Source material is routinely a mix of live records and untouched templates, and a template's own worked example will be full of invented values that read exactly like data. Anything generated from it later imports those as real unless the README says otherwise.
+- **Make it openable.** If the source arrives in a format that will not render where the team reads the repo – phone-camera image formats are the common case – keep the originals and add converted copies beside them. Evidence nobody can open is evidence nobody checks.
+
+Whether it is committed or gitignored is a separate question, decided by what the files actually contain rather than the subject they touch. A design document that mentions a sensitive topic is not a sensitive record.
+
 1. `docs/decisions/ADR-001-*.md` through `ADR-NNN-*.md` — decisions first, everything else references them
 2. `docs/SCOPE.md` — boundaries and features
 3. `docs/ARCHITECTURE.md` — system design
@@ -168,7 +182,7 @@ Generate files in this order (dependencies first):
 7. `docs/DEVELOPMENT_ROADMAP.md` — phased build plan with deliverables, exit criteria, and starting prompts (always for Full Path solutions)
 8. `docs/agents/architect.md` – Tactical Architect skill (always). Must include a **session-start sequence** and an **end-of-session write**, not just the escalation guide. Without them the TA cold-starts context-blind every session and its work never finds its way back here. See **Tactical Architect Session Lifecycle** below for what both contain
 9. `docs/agents/[other-roles].md` — other agent skills as needed
-10. `CLAUDE.md` – project context for the solution repo. Include a **Multi-Machine Sync** section (if the user works across multiple machines) and a **Memory Graduation** section (always) – see the entries of those names in `knowledge/lessons-learned.md` for both patterns and ready-to-adapt section text. When you write a Multi-Machine Sync section, also copy `scripts/sync.sh` from this repo into the solution repo and mark it executable – the section tells the reader to run it, so it has to exist
+10. `CLAUDE.md` – project context for the solution repo. Include a **Multi-Machine Sync** section (if the user works across multiple machines) and a **Memory Graduation** section (always) – see the entries of those names in `knowledge/lessons-learned.md` for both patterns and ready-to-adapt section text. When you write a Multi-Machine Sync section, also copy `scripts/sync.sh` from this repo into the solution repo and mark it executable – the section tells the reader to run it, so it has to exist. **If the solution has source data (item 0), add a short Source Data section too**: where it lives in the repo, that its README says which files are real, and that it is frozen – the project replaces that source, it does not extend it
 11. `README.md` — project overview
 12. `SETUP_GUIDE.md` — environment and tool setup
 13. `docs/DEV_LOG.md` — initialized with this session's summary

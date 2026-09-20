@@ -257,8 +257,11 @@ Additional ADRs as needed for significant choices (state management, caching str
 > **Agent Roles:** [roles and tools — including Tactical Architect for CLI]
 > **Repo Setup:** [branch strategy and structure]
 > **Org Constraints Applied:** [relevant items from org context]
+> **Source Data:** [what exists already and where it lives now – or "none"]
 >
 > Ready to generate? Or do you want to adjust anything?"
+
+Ask the source-data question outright if it has not already come up: *"Is there anything this gets built from that already exists – an export, a spreadsheet, old files, photos, scans? Where is it right now?"* It is easy to reach Phase 5 having discussed that data at length without ever establishing that it lives somewhere the new repo will not reach.
 
 ### Outputs to Generate:
 Once confirmed, write the following files directly to the target solution directory:
@@ -266,7 +269,13 @@ Once confirmed, write the following files directly to the target solution direct
 **Step 1: Ask for the target location.**
 > "What should I name this solution, and where should I create it? Default: `~/projects/[solution-name]`"
 
-**Step 2: Create the directory structure and write all files.**
+**Step 2: Move the source data in, before writing anything.**
+
+If this solution is built from something that already exists, it goes into the repo now, at `docs/seed/` or a name that fits the path, with a README recording where each file came from, which hold real data, and which are empty templates. Every generated file then points at that in-repo path.
+
+Read the files first. Do not take a description of what is in them, and do not take a folder name as the boundary of the dependency – what you need may be a level up from the path everyone has been quoting. An absolute path into the user's home directory is never an acceptable dependency for a generated repo: see item 0 of the File Generation Order in `CLAUDE.md`.
+
+**Step 3: Create the directory structure and write all files.**
 
 **Core Files (always):**
 - `SETUP_GUIDE.md` — Step-by-step instructions to initialize the development environment
@@ -293,9 +302,9 @@ Once confirmed, write the following files directly to the target solution direct
 - `docs/API_SPEC.md` — When the solution has APIs
 - `docs/DATA_MODEL.md` — When the solution has a data layer
 
-**Step 3: Report what was created** — list all files written and a brief summary.
+**Step 4: Report what was created** – list all files written and a brief summary.
 
-**Step 4: Offer to initialize Git:**
+**Step 5: Offer to initialize Git:**
 > "Want me to initialize Git, make the first commit, and create the remote repo? (Uses the create-a-remote command from your org profile — `gh` on GitHub, `glab` on GitLab.)"
 
 ### Output Format Note:
