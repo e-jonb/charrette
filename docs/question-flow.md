@@ -301,6 +301,7 @@ Read the files first. Do not take a description of what is in them, and do not t
 **Conditional Files:**
 - `docs/API_SPEC.md` — When the solution has APIs
 - `docs/DATA_MODEL.md` — When the solution has a data layer
+- **When the solution will hold gitignored private content (PII, credentials, real records):** copy `scripts/backup-private.sh`, `.githooks/pre-commit`, `scripts/install-hooks.sh` and `scripts/test-pii-hook.sh` from this repo verbatim, start `.private-paths` and `.pii-allowlist` from `templates/private-content/`, add the `.private-backup-dir` line to `.gitignore`, and write the **Private Content Backup** plus **What can actually destroy private content** sections into `CLAUDE.md`. **Then fill in `.private-paths`** – it is the only file that should differ between repos, and both the hook and the backup script read it. Generate all of it at scaffold time, not later: the trigger is the decision to gitignore something, and by the time it is missed the material is already gone
 
 **Step 4: Report what was created** – list all files written and a brief summary.
 

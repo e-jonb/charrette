@@ -1,0 +1,26 @@
+# Private content to back up. See scripts/backup-private.sh.
+#
+# Declare what is IRREPLACEABLE, not merely what is gitignored. Rendered PDFs,
+# build output and .DS_Store are gitignored too and regenerate on demand; the
+# point of this file is the material that does not. If it is not listed here it
+# is not backed up, so omission is the decision, not an oversight.
+#
+# Two entry forms:
+#   some/path        that path and everything under it
+#   dirname:_private every directory with this name, at any depth, so privacy
+#                    can be context-local (kids/AB/_private/ next to its work)
+#
+# Both .githooks/pre-commit and scripts/backup-private.sh read this file. The
+# hook blocks anything staged from these paths; the script mirrors them. Keep
+# it accurate and both stay correct without either script being edited.
+
+# Optional directive. Controls how much detail PRIVATE_MANIFEST.md records:
+#   full     filenames (default) - use when knowing which file was lost is the
+#            point and the filenames themselves are benign
+#   summary  directory-level counts only - use when a filename can itself
+#            identify a person or a condition, since the manifest is committed
+#   none     no manifest
+# manifest: full
+
+# --- declare paths below -----------------------------------------------------
+dirname:_private

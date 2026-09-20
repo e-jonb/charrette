@@ -189,6 +189,15 @@ Whether it is committed or gitignored is a separate question, decided by what th
 14. `docs/TECH_DEBT.md` — initialized with known deferred items
 15. The review template, at the path named in the org profile – `.github/PULL_REQUEST_TEMPLATE.md` on GitHub, `.gitlab/merge_request_templates/Default.md` on GitLab
 16. `scripts/md-conventions.py`, `.claude/hooks/md-conventions.sh`, and a `PostToolUse` entry in `.claude/settings.json` – copy all three from this repo verbatim, and mark the hook executable. Add a short Markdown Conventions section to the solution's `CLAUDE.md` stating the two rules; point at the checker for enforcement rather than restating how it works. Without this the silent-join bug starts over in every repo you generate, and the architect working there has no way to know the rule exists
+17. **If the solution will hold gitignored private content** – PII, credentials, real records – it also needs the private-content set, and it needs it from day one rather than after the first loss. **Copy all four scripts from this repo verbatim and mark them executable.** They are written to be identical in every repo that has them:
+    - `scripts/backup-private.sh`, `.githooks/pre-commit`, `scripts/install-hooks.sh`, `scripts/test-pii-hook.sh`
+    - `.private-paths` and `.pii-allowlist` – start from `templates/private-content/`, then **fill in `.private-paths` for this solution**. It declares what is irreplaceable, not what is merely ignored
+    - The `.private-backup-dir` line in `.gitignore`
+    - The **Private Content Backup** and **What can actually destroy private content** sections in `CLAUDE.md`
+
+    Read `templates/private-content/README.md` before generating any of it. The reasoning belongs in the solution's own `CLAUDE.md`, not only here: a folder excluded from git is excluded from the backup, the sync and the recovery all at once and silently, because git is all three – and the excluded folder is by definition the one holding what would hurt most to lose.
+
+    **Per-repo variation lives in `.private-paths` and nowhere else.** Both the hook and the backup script read it. Do not edit either script to suit a repo. A hook carrying another repo's paths still runs, still prints its scan line, and still exits 0 – it is simply looking somewhere else, and nothing about its output says so.
 
 ## Ongoing Development Sessions
 

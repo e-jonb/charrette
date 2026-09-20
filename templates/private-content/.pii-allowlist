@@ -1,0 +1,21 @@
+# PII scan allowlist.
+#
+# One literal string per line. Matching text is removed from a file's content
+# BEFORE the PII patterns are applied, so an allowlisted string cannot mask a
+# real finding elsewhere in the same file - only the exact string is exempt.
+#
+# Only PUBLIC INSTITUTIONAL contact details belong here: a government agency's
+# published phone number, a school's admissions email. Never a person.
+#
+# Every entry needs a reason on the line above it. An allowlist without reasons
+# becomes a place people quietly park things they did not want to deal with,
+# and it is the first file to check when the hook stops catching anything.
+#
+# This allowlist only affects the low-severity tier in practice. An SSN or a
+# credential blocks regardless, and neither belongs in this repo at all - not
+# even inside a private path. Credentials belong in the password manager.
+#
+# Example:
+#   # National contact centre, published on the agency's own website
+#   800-555-0100
+

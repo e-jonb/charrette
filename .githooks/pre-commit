@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# Pre-commit PII guard.
+#
+# THIS PROTECTS AGAINST LEAKS, NOT AGAINST DELETION. A commit hook cannot stop
+# `rm`, and it cannot stop `git clean -xdf` from taking every gitignored file
+# in the repo. Deletion is covered by scripts/backup-private.sh (mirror) and
+# its --check tripwire, which sync.sh runs at session start. Do not read a
+# passing hook as "private content is safe."
+#
+# Two design decisions, both learned expensively.
+#
+# 1. DIFF-SCOPED. Only lines added in this commit are scanned. A whole-file
+#    scan fails immediately on legacy content and gets switched off: measured
+#    on a real records repo, whole-file scanning flagged 39% of all tracked
+#    files, nearly all of them legitimate agency phone numbers and office
+#    addresses in ordinary correspondence. A check that fires on a legitimate
+#    case in its first week is a check nobody runs by its second.
+#
+# 2. SEVERITY-TIERED. An SSN or a credential is unambiguous and blocks. An
+#    email, phone or street address is usually a doctor's office or a
+#    government agency, so it reports and does not block unless PII_STRICT=1.
+#    In the same measurement, SSN matched zero of 98 tracked files - the
+#    high-severity pattern is clean, and it is the one worth being absolute
+#    about.
+#
+# Always blocking, regardless of tier: anything staged from inside a private
+# path. That is the rule this repo's whole PII convention rests on.
+#
+# 3. THE PRIVATE PATHS ARE READ FROM .private-paths, NOT HARDCODED HERE. This
+#    script is identical in every repo that has it; the paths are not. An
+#    earlier version carried one repo's paths into all of them, so a repo that
+#    gitignored `documents/` got a hook checking for `documents/print-ready/`,
+#    blocked nothing, and printed a reassuring scan line while doing it. Same
+#    principle backup-private.sh already follows: per-repo variation lives in
+#    .private-paths, which is data.
+#
+# Override a false positive: ALLOW_PII=1 git commit ...
+# Escalate warnings to blocks: PII_STRICT=1 git commit ...
+
+set -uo pipefail
+
+ALLOW_PII="${ALLOW_PII:-0}"
+PII_STRICT="${PII_STRICT:-0}"
+
+STAGED="$(git diff --cached --name-only --diff-filter=ACM)"
+[ -n "$STAGED" ] || exit 0
+
+ERRORS=0
+
+# ---- always blocking: private paths must never be staged --------------------
+# Built from .private-paths so this file stays identical everywhere. Entries:
+#   some/path      -> blocks that path and everything under it
+#   dirname:NAME   -> blocks any directory called NAME, at any depth
+# With no .private-paths, fall back to the one universal convention and say so,
+# rather than silently checking nothing.
+PRIVATE_RE=''
+if [ -f .private-paths ]; then
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    line="$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [ -n "$line" ] || continue
+    case "$line" in
+      dirname:*)
+        name="$(printf '%s' "${line#dirname:}" | sed 's/[][\.*^$(){}?+|]/\\&/g')"
+        PRIVATE_RE="${PRIVATE_RE:+$PRIVATE_RE|}(^|/)${name}(/|$)"
+        ;;
+      *)
+        path="$(printf '%s' "${line%/}" | sed 's/[][\.*^$(){}?+|]/\\&/g')"
+        PRIVATE_RE="${PRIVATE_RE:+$PRIVATE_RE|}^${path}(/|$)"
+        ;;
+    esac
+  done < .private-paths
+fi
+if [ -z "$PRIVATE_RE" ]; then
+  PRIVATE_RE='(^|/)_private(/|$)'
+  echo "pii-scan: no .private-paths found - blocking only _private/ by convention." >&2
+fi
+
+PRIVATE_STAGED="$(printf '%s\n' "$STAGED" | grep -E "$PRIVATE_RE" || true)"
+if [ -n "$PRIVATE_STAGED" ]; then
+  echo "BLOCKED: these are private paths and must never be committed:" >&2
+  printf '%s\n' "$PRIVATE_STAGED" | sed 's/^/  /' >&2
+  echo >&2
+  echo "They are gitignored; staging them took a -f. Unstage with:" >&2
+  echo "  git reset HEAD -- <path>" >&2
+  ERRORS=$((ERRORS + 1))
+fi
+
+# ---- allowlist --------------------------------------------------------------
+ALLOWLIST=()
+if [ -f .pii-allowlist ]; then
+  while IFS= read -r AL; do
+    case "$AL" in ''|'#'*) continue ;; esac
+    ALLOWLIST+=("$AL")
+  done < .pii-allowlist
+fi
+strip_allowed() {
+  local text="$1" entry
+  for entry in ${ALLOWLIST+"${ALLOWLIST[@]}"}; do text="${text//"$entry"/}"; done
+  printf '%s' "$text"
+}
+
+# ---- patterns ---------------------------------------------------------------
+SSN_RE='[0-9]{3}-[0-9]{2}-[0-9]{4}'
+# Add domain-specific credential shapes here as you meet them - a portal's
+# login-ID naming, a vendor's token prefix. Keep them high-confidence: this
+# tier blocks.
+CRED_RE='password[[:space:]]*[:=]|routing[[:space:]]*(number|#)|account[[:space:]]*(number|#)[[:space:]]*[:=]|BEGIN [A-Z ]*PRIVATE KEY|postgres://[^[:space:]]*:[^[:space:]]*@'
+EMAIL_RE='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+PHONE_RE='(\+?1[-. ]?)?\(?[0-9]{3}\)?[-. ]?[0-9]{3}[-. ]?[0-9]{4}'
+ADDR_RE='[0-9]{1,5}[[:space:]]+[A-Z][a-z]+([[:space:]]+[A-Z][a-z]+){0,3}[[:space:]]+(St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Way|Ct|Court|Cir|Circle|Pl|Place|Pkwy|Parkway|Hwy|Highway)\b'
+
+BLOCKS=(); WARNS=(); SCANNED=0; ADDED_LINES=0
+
+while IFS= read -r FILE; do
+  [ -n "$FILE" ] || continue
+  case "$FILE" in
+    .githooks/*|scripts/*|.gitignore|.gitmodules|.claude/*|.pii-allowlist|.private-paths) continue ;;
+    *.pdf|*.png|*.jpg|*.jpeg|*.docx|*.zip) continue ;;
+  esac
+
+  # Only the lines this commit ADDS. -U0 keeps context out of the sample.
+  ADDED="$(git diff --cached -U0 --diff-filter=ACM -- "$FILE" 2>/dev/null | grep '^+' | grep -v '^+++' | sed 's/^+//')"
+  [ -n "$ADDED" ] || continue
+
+  SCANNED=$((SCANNED + 1))
+  ADDED_LINES=$((ADDED_LINES + $(printf '%s\n' "$ADDED" | wc -l | tr -d ' ')))
+  ADDED="$(strip_allowed "$ADDED")"
+
+  printf '%s' "$ADDED" | grep -qE  "$SSN_RE"   && BLOCKS+=("$FILE: SSN")
+  printf '%s' "$ADDED" | grep -qiE "$CRED_RE"  && BLOCKS+=("$FILE: credential")
+  printf '%s' "$ADDED" | grep -qE  "$EMAIL_RE" && WARNS+=("$FILE: email")
+  printf '%s' "$ADDED" | grep -qE  "$PHONE_RE" && WARNS+=("$FILE: phone")
+  printf '%s' "$ADDED" | grep -qE  "$ADDR_RE"  && WARNS+=("$FILE: street address")
+done <<< "$STAGED"
+
+echo "pii-scan: $ADDED_LINES added line(s) across $SCANNED file(s), ${#ALLOWLIST[@]} allowlist entr(ies)."
+
+if [ "${#BLOCKS[@]}" -gt 0 ]; then
+  echo >&2
+  echo "BLOCKED - high-severity pattern in newly added lines:" >&2
+  printf '  %s\n' "${BLOCKS[@]}" >&2
+  echo >&2
+  echo "An SSN or credential does not belong in this repo at all - not even in" >&2
+  echo "a _private/ folder. Credentials belong in the password manager." >&2
+  ERRORS=$((ERRORS + 1))
+fi
+
+if [ "${#WARNS[@]}" -gt 0 ]; then
+  echo
+  echo "NOTICE - contact-shaped patterns in newly added lines:"
+  printf '  %s\n' "${WARNS[@]}"
+  echo
+  echo "Usually a clinic, a school or a government office, which is fine. If any"
+  echo "of it identifies a private individual, move it to a private path."
+  echo "Add known-good public contacts to .pii-allowlist with a reason."
+  if [ "$PII_STRICT" = "1" ]; then
+    echo "PII_STRICT=1 - treating these as blocking." >&2
+    ERRORS=$((ERRORS + 1))
+  fi
+fi
+
+if [ "$ERRORS" -gt 0 ] && [ "$ALLOW_PII" = "1" ]; then
+  echo >&2; echo "ALLOW_PII=1 - proceeding despite the above." >&2
+  exit 0
+fi
+[ "$ERRORS" -eq 0 ] || { echo >&2; echo "Commit refused. Override: ALLOW_PII=1 git commit ..." >&2; exit 1; }
+exit 0
