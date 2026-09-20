@@ -40,15 +40,15 @@
 # VENDORED COPY. Every repo scaffolded from this framework carries its own.
 # DIFF AGAINST THE OTHERS BEFORE EDITING, and port any fix to all of them.
 #
-# This is deliberately NOT a shim pointing at one shared script. A shim that
-# cannot find its canonical copy exits quietly - survivable for a linter,
-# unacceptable for a backup. That choice buys loud failure and pays for it in
-# drift, and the drift is real: this file has already had a bug fixed in one
-# copy while two siblings kept it for days. Vendoring is still the right call
-# here; just do not pretend the copies stay in step on their own.
+# This is deliberately NOT a shim. A shim that cannot find its canonical script
+# exits quietly - survivable for a linter, unacceptable for a backup. That
+# choice buys loud failure and pays for it in drift, and the drift is real: a
+# markdown bug in the manifest header was found and fixed in one copy on
+# 2026-09-10 and the other two still had it the same day. An earlier version of
+# this comment claimed the copies would "drift harmlessly." They did not.
 #
 # Per-repo variation belongs in `.private-paths`, which is data. Nothing
-# behavioral should differ between copies.
+# behavioral should differ between these three files.
 
 set -uo pipefail
 
@@ -233,24 +233,41 @@ if [ "$DRY_RUN" -eq 0 ]; then
   mkdir -p "$DEST" || { echo "ERROR: cannot create $DEST" >&2; exit 1; }
 fi
 
+CLOUD_DEST=0
 case "$DEST" in
   *Mobile\ Documents*|*iCloud*|*Dropbox*|*Google\ Drive*|*OneDrive*)
+    CLOUD_DEST=1
     echo
     echo "NOTE: destination looks cloud-synced. That is good for durability and"
     echo "      means a third party now stores this content. If what you are"
     echo "      backing up would matter in someone else's hands, confirm the"
     echo "      provider is end-to-end encrypted (on iCloud that is"
-    echo "      Advanced Data Protection, off by default) before relying on it." ;;
+    echo "      Advanced Data Protection, off by default) before relying on it."
+    echo
+    echo "      End-to-end protection does NOT survive sharing. A shared link or"
+    echo "      shared folder hands the content to someone who may not have it"
+    echo "      enabled. Keep these trees unshared." ;;
 esac
 
 SRC_DEV="$(df "$REPO_ROOT" 2>/dev/null | awk 'NR==2{print $1}')"
 DST_DEV="$(df "$DEST" 2>/dev/null | awk 'NR==2{print $1}')"
 if [ -n "$SRC_DEV" ] && [ "$SRC_DEV" = "$DST_DEV" ]; then
   echo
-  echo "NOTE: backup is on the same volume as the repo. That covers the failure"
-  echo "      that prompted this script - a directory disappearing - but not"
-  echo "      disk loss or theft. Point .private-backup-dir at an external"
-  echo "      drive or an encrypted cloud folder when convenient."
+  if [ "$CLOUD_DEST" -eq 1 ]; then
+    # A cloud folder's local cache always shares the volume, so the raw
+    # same-volume test fires and reads as a warning when it is not one. The
+    # off-device copy is the provider's, not this disk's.
+    echo "NOTE: the destination's local cache is on the same volume as the repo,"
+    echo "      which is normal for a synced folder. Disk loss is covered by the"
+    echo "      provider's copy, not by this one - so that protection is only as"
+    echo "      good as the sync actually completing. Check it has uploaded"
+    echo "      before treating this as off-device."
+  else
+    echo "NOTE: backup is on the same volume as the repo. That covers the failure"
+    echo "      that prompted this script - a directory disappearing - but not"
+    echo "      disk loss or theft. Point .private-backup-dir at an external"
+    echo "      drive or an encrypted cloud folder when convenient."
+  fi
 fi
 
 # ------------------------------------------------------------------- mirror
