@@ -30,9 +30,8 @@
 #    script is identical in every repo that has it; the paths are not. An
 #    earlier version carried one repo's paths into all of them, so a repo that
 #    gitignored `documents/` got a hook checking for `documents/print-ready/`,
-#    blocked nothing, and printed a reassuring scan line while doing it. Same
-#    principle backup-private.sh already follows: per-repo variation lives in
-#    .private-paths, which is data.
+#    blocked nothing, and printed a reassuring scan line while doing it. Same principle backup-private.sh already follows:
+#    per-repo variation lives in .private-paths, which is data.
 #
 # Override a false positive: ALLOW_PII=1 git commit ...
 # Escalate warnings to blocks: PII_STRICT=1 git commit ...
@@ -71,9 +70,17 @@ if [ -f .private-paths ]; then
     esac
   done < .private-paths
 fi
-if [ -z "$PRIVATE_RE" ]; then
-  PRIVATE_RE='(^|/)_private(/|$)'
-  echo "pii-scan: no .private-paths found - blocking only _private/ by convention." >&2
+# `_private` is always included, on top of whatever .private-paths declares.
+# It is the name of the convention rather than any one repo's path, so it is
+# not per-repo variation - and a repo that creates _private/ and forgets to
+# declare it would otherwise be unprotected here. It still needs declaring for
+# backup-private.sh, which has no equivalent safety net.
+case "$PRIVATE_RE" in
+  *'(^|/)_private(/|$)'*) ;;
+  *) PRIVATE_RE="${PRIVATE_RE:+$PRIVATE_RE|}(^|/)_private(/|$)" ;;
+esac
+if [ ! -f .private-paths ]; then
+  echo "pii-scan: no .private-paths - blocking only _private/ by convention." >&2
 fi
 
 PRIVATE_STAGED="$(printf '%s\n' "$STAGED" | grep -E "$PRIVATE_RE" || true)"
@@ -102,9 +109,8 @@ strip_allowed() {
 
 # ---- patterns ---------------------------------------------------------------
 SSN_RE='[0-9]{3}-[0-9]{2}-[0-9]{4}'
-# Add domain-specific credential shapes here as you meet them - a portal's
-# login-ID naming, a vendor's token prefix. Keep them high-confidence: this
-# tier blocks.
+# Add domain-specific credential shapes here as you meet them. Keep them
+# high-confidence: this tier blocks.
 CRED_RE='password[[:space:]]*[:=]|routing[[:space:]]*(number|#)|account[[:space:]]*(number|#)[[:space:]]*[:=]|BEGIN [A-Z ]*PRIVATE KEY|postgres://[^[:space:]]*:[^[:space:]]*@'
 EMAIL_RE='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
 PHONE_RE='(\+?1[-. ]?)?\(?[0-9]{3}\)?[-. ]?[0-9]{3}[-. ]?[0-9]{4}'
