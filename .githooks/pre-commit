@@ -53,6 +53,8 @@ ERRORS=0
 # With no .private-paths, fall back to the one universal convention and say so,
 # rather than silently checking nothing.
 PRIVATE_RE=''
+GUARDING=()   # human-readable, for the scan line
+MISSING=()    # declared but not on disk - a typo or a stale copy
 if [ -f .private-paths ]; then
   while IFS= read -r line; do
     line="${line%%#*}"
@@ -60,12 +62,20 @@ if [ -f .private-paths ]; then
     [ -n "$line" ] || continue
     case "$line" in
       dirname:*)
-        name="$(printf '%s' "${line#dirname:}" | sed 's/[][\.*^$(){}?+|]/\\&/g')"
+        raw="${line#dirname:}"
+        name="$(printf '%s' "$raw" | sed 's/[][\.*^$(){}?+|]/\\&/g')"
         PRIVATE_RE="${PRIVATE_RE:+$PRIVATE_RE|}(^|/)${name}(/|$)"
+        GUARDING+=("$raw/")
+        # A dirname: entry names a convention, not a location. It legitimately
+        # matches nothing in a repo that has not created one yet, so it is
+        # never reported as missing.
         ;;
       *)
-        path="$(printf '%s' "${line%/}" | sed 's/[][\.*^$(){}?+|]/\\&/g')"
+        raw="${line%/}"
+        path="$(printf '%s' "$raw" | sed 's/[][\.*^$(){}?+|]/\\&/g')"
         PRIVATE_RE="${PRIVATE_RE:+$PRIVATE_RE|}^${path}(/|$)"
+        GUARDING+=("$raw")
+        [ -e "$raw" ] || MISSING+=("$raw")
         ;;
     esac
   done < .private-paths
@@ -77,7 +87,8 @@ fi
 # backup-private.sh, which has no equivalent safety net.
 case "$PRIVATE_RE" in
   *'(^|/)_private(/|$)'*) ;;
-  *) PRIVATE_RE="${PRIVATE_RE:+$PRIVATE_RE|}(^|/)_private(/|$)" ;;
+  *) PRIVATE_RE="${PRIVATE_RE:+$PRIVATE_RE|}(^|/)_private(/|$)"
+     GUARDING+=("_private/ (convention)") ;;
 esac
 if [ ! -f .private-paths ]; then
   echo "pii-scan: no .private-paths - blocking only _private/ by convention." >&2
@@ -140,7 +151,23 @@ while IFS= read -r FILE; do
   printf '%s' "$ADDED" | grep -qE  "$ADDR_RE"  && WARNS+=("$FILE: street address")
 done <<< "$STAGED"
 
-echo "pii-scan: $ADDED_LINES added line(s) across $SCANNED file(s), ${#ALLOWLIST[@]} allowlist entr(ies)."
+# The scan line reports SCOPE, not just result. A hook pointed at nothing
+# prints the same "found nothing" as a hook that genuinely found nothing, and
+# that is how one of these ran for nine days guarding a path the repo did not
+# have. Saying what is guarded makes the misconfiguration visible every commit.
+GUARD_LIST=""
+for g in ${GUARDING+"${GUARDING[@]}"}; do GUARD_LIST="${GUARD_LIST:+$GUARD_LIST, }$g"; done
+echo "pii-scan: $ADDED_LINES added line(s) across $SCANNED file(s); guarding [$GUARD_LIST]; ${#ALLOWLIST[@]} allowlist entr(ies)."
+
+if [ "${#MISSING[@]}" -gt 0 ]; then
+  echo
+  echo "NOTICE - declared in .private-paths but not on disk:"
+  printf '  %s\n' "${MISSING[@]}"
+  echo
+  echo "Either a typo, or this file was copied from another repo. Nothing is"
+  echo "being guarded at those paths, and backup-private.sh is reading the same"
+  echo "declarations, so nothing is being backed up there either."
+fi
 
 if [ "${#BLOCKS[@]}" -gt 0 ]; then
   echo >&2
