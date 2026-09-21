@@ -37,18 +37,25 @@
 # in the backup. If that matters for a given file, delete it in both places.
 #
 # ---------------------------------------------------------------------------
-# VENDORED COPY. Every repo scaffolded from this framework carries its own.
-# DIFF AGAINST THE OTHERS BEFORE EDITING, and port any fix to all of them.
+# VENDORED COPY. Canonical lives in the Studio, at
+# solution-architect-studio/scripts/backup-private.sh (since 2026-09-20).
+#
+# EDIT THE CANONICAL COPY, THEN PROPAGATE. Never edit a vendored copy in place:
+# that is the drift this comment exists to prevent, and it has happened - a
+# markdown bug in the manifest header was fixed in one copy on 2026-09-10 and
+# the other two still had it the same day. An earlier version of this comment
+# claimed the copies would "drift harmlessly." They did not. A later version
+# named the three repos as siblings with no canonical among them, which left a
+# reader correctly concluding that any change at all creates drift.
 #
 # This is deliberately NOT a shim. A shim that cannot find its canonical script
-# exits quietly - survivable for a linter, unacceptable for a backup. That
-# choice buys loud failure and pays for it in drift, and the drift is real: a
-# markdown bug in the manifest header was found and fixed in one copy on
-# 2026-09-10 and the other two still had it the same day. An earlier version of
-# this comment claimed the copies would "drift harmlessly." They did not.
+# exits quietly - survivable for a linter, unacceptable for a backup. Loud
+# failure is worth the propagation step.
 #
-# Per-repo variation belongs in `.private-paths`, which is data. Nothing
-# behavioral should differ between these three files.
+# Per-repo variation belongs in `.private-paths` and `.private-backup-dir`,
+# which are data. Nothing behavioral should differ between copies - including
+# the destination type, which is read from `.private-backup-dir` rather than
+# branched in the script per repo.
 
 set -uo pipefail
 
@@ -137,8 +144,33 @@ else
   DEST="$HOME/private-backups/$REPO_NAME"; DEST_SRC="default"
 fi
 
+# The destination TYPE is data, not a per-repo code branch. A destination
+# beginning `rclone:` is an rclone remote - typically a `crypt` remote over
+# cloud storage - and everything downstream that assumes a local filesystem
+# path has to be skipped for it. Anything else is a filesystem path and
+# behaves exactly as it always has.
+#
+# This is what lets one repo back up to an encrypted cloud remote while its
+# siblings keep writing to a local or cloud-synced folder, with no behavioral
+# difference between copies of this script. Per ADR-010 in
+# a repo holding org property that turns over, that split is deliberate:
+# changes hands has different requirements from one person's own records.
+DEST_KIND="path"
+case "$DEST" in
+  rclone:*)
+    DEST_KIND="rclone"
+    RCLONE_TARGET="${DEST#rclone:}"
+    case "$RCLONE_TARGET" in
+      *:*) ;;
+      *) echo "ERROR: rclone destination must be remote:path, got '$RCLONE_TARGET'" >&2
+         echo "       e.g. rclone:my-crypt:my-repo-name" >&2
+         exit 1 ;;
+    esac ;;
+esac
+
 echo "repo:        $REPO_NAME"
 echo "destination: $DEST  ($DEST_SRC)"
+[ "$DEST_KIND" = "rclone" ] && echo "             rclone remote - encrypted if the remote is a crypt"
 echo
 
 # ------------------------------------------------------------------- resolve
@@ -210,15 +242,69 @@ if [ -f "$REPO_ROOT/PRIVATE_MANIFEST.md" ]; then
     echo "    $DEST" >&2
     echo "" >&2
     echo "  If the deletion was not intentional, restore with:" >&2
-    echo "    rsync -a \"$DEST/\" \"$REPO_ROOT/\"" >&2
+    if [ "$DEST_KIND" = "rclone" ]; then
+      # Whoever reads this is having a bad day and will paste what it says.
+      # A restore line that is wrong for the configured destination makes the
+      # tripwire worse than useless: it detects the disaster correctly and
+      # then misdirects the recovery.
+      echo "    rclone copy \"$RCLONE_TARGET\" \"$REPO_ROOT\" --progress" >&2
+      echo "" >&2
+      echo "  THIS REMOTE IS ENCRYPTED. If rclone is not already configured on" >&2
+      echo "  this machine, the copy is unreadable without BOTH secrets:" >&2
+      echo "    - the crypt password" >&2
+      echo "    - the crypt salt (rclone calls it password2)" >&2
+      echo "  Both are in the password vault with the remote's own credentials." >&2
+      echo "  Filenames are encrypted too, so browsing the storage provider's" >&2
+      echo "  web interface will show nothing readable. That is expected." >&2
+    else
+      echo "    rsync -a \"$DEST/\" \"$REPO_ROOT/\"" >&2
+    fi
     echo "" >&2
     echo "  If it WAS intentional, re-run without --check to update the manifest." >&2
     echo "########################################################################" >&2
     exit 1
   fi
+  # ---------------------------------------------------- staleness
+  # The tripwire above catches files going missing. It cannot catch the
+  # backup silently not running, because it never looks at the destination -
+  # and that is a property worth keeping, since it means `--check` needs no
+  # network and no credentials and can run at every session start.
+  #
+  # A remote destination makes the silent no-op a real failure mode: an
+  # expired OAuth token, a revoked credential or a renamed remote produces a
+  # backup that has not run in six weeks while every check still passes.
+  #
+  # The manifest's own generation timestamp closes that gap with no network.
+  # It is not proof the copy succeeded - only that the script completed a run
+  # recently enough to be believed.
+  #
+  # 30 days, because private content here moves on a roughly monthly cadence
+  # (the campout field sheet is the regular producer), so a month of silence
+  # is plausible in a quiet period and is exactly when nobody would notice a
+  # broken backup. Shorter fires during normal quiet spells and gets ignored,
+  # which is worse than not checking. Override with PRIVATE_BACKUP_MAX_AGE.
+  STALE_DAYS="${PRIVATE_BACKUP_MAX_AGE:-30}"
+  GENERATED="$(grep -oE '\*\*Generated:\*\*.*on [0-9]{4}-[0-9]{2}-[0-9]{2}' "$REPO_ROOT/PRIVATE_MANIFEST.md" 2>/dev/null | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1)"
+  if [ -n "$GENERATED" ]; then
+    GEN_EPOCH="$(date -j -f '%Y-%m-%d' "$GENERATED" '+%s' 2>/dev/null || date -d "$GENERATED" '+%s' 2>/dev/null)"
+    if [ -n "$GEN_EPOCH" ]; then
+      AGE_DAYS=$(( ( $(date '+%s') - GEN_EPOCH ) / 86400 ))
+      if [ "$AGE_DAYS" -gt "$STALE_DAYS" ]; then
+        echo
+        echo "WARNING: last recorded backup run was $GENERATED - $AGE_DAYS days ago." >&2
+        echo "         Nothing is missing, but nothing has been backed up recently" >&2
+        echo "         either. If the destination is remote, check the credential" >&2
+        echo "         has not expired - that failure is silent and this warning" >&2
+        echo "         is the only thing that sees it." >&2
+        echo "         Run ./scripts/backup-private.sh (no --check) to refresh." >&2
+      fi
+    fi
+  fi
+
   if [ "$CHECK_ONLY" -eq 1 ]; then
     echo
     echo "tripwire OK: $TOTAL_FILES file(s) present, manifest recorded ${RECORDED:-none}."
+    [ -n "$GENERATED" ] && echo "             last run $GENERATED (${AGE_DAYS:-?} days ago, warn over $STALE_DAYS)."
     exit 0
   fi
 elif [ "$CHECK_ONLY" -eq 1 ]; then
@@ -229,28 +315,85 @@ elif [ "$CHECK_ONLY" -eq 1 ]; then
 fi
 
 # --------------------------------------------------------------- destination checks
-if [ "$DRY_RUN" -eq 0 ]; then
+if [ "$DRY_RUN" -eq 0 ] && [ "$DEST_KIND" = "path" ]; then
   mkdir -p "$DEST" || { echo "ERROR: cannot create $DEST" >&2; exit 1; }
 fi
 
+# Preflight for a remote destination. rsync failing used to print a warning
+# per path and let the script reach a cheerful "done" - survivable for a
+# local copy you can eyeball, not for a remote you cannot. Fail before
+# copying anything rather than half way through.
+if [ "$DEST_KIND" = "rclone" ] && [ "$DRY_RUN" -eq 0 ]; then
+  if ! command -v rclone >/dev/null 2>&1; then
+    echo "ERROR: destination is an rclone remote but rclone is not installed." >&2
+    echo "       Install it (brew install rclone) or point .private-backup-dir" >&2
+    echo "       at a filesystem path. NOTHING WAS BACKED UP." >&2
+    exit 1
+  fi
+  RCLONE_REMOTE_NAME="${RCLONE_TARGET%%:*}"
+  if ! rclone listremotes 2>/dev/null | grep -qx "${RCLONE_REMOTE_NAME}:"; then
+    echo "ERROR: rclone remote '${RCLONE_REMOTE_NAME}:' is not configured." >&2
+    echo "       Run 'rclone config' and recreate it. The crypt password and" >&2
+    echo "       salt are in the password vault. NOTHING WAS BACKED UP." >&2
+    exit 1
+  fi
+  if ! rclone lsd "${RCLONE_REMOTE_NAME}:" >/dev/null 2>&1; then
+    echo "ERROR: cannot reach rclone remote '${RCLONE_REMOTE_NAME}:'." >&2
+    echo "       Most likely an expired or revoked credential, or no network." >&2
+    echo "       This is the failure that is otherwise SILENT - a backup that" >&2
+    echo "       has not run for weeks while every other check passes." >&2
+    echo "       NOTHING WAS BACKED UP." >&2
+    exit 1
+  fi
+fi
+
 CLOUD_DEST=0
+# Three destination shapes, deliberately not collapsed into one message.
+# The iCloud/ADP branch below is CORRECT and CURRENT for the personal repos
+# (personal repos that never change hands) which stay on a provider with
+# Protection. Do not "fix" it to say ADP no longer matters - that is true
+# only for repos held by a role that turns over. The split is deliberate.
+if [ "$DEST_KIND" = "rclone" ]; then
+  echo
+  echo "NOTE: destination is an rclone remote. If it is a `crypt` remote, the"
+  echo "      content is encrypted before it leaves this machine and the"
+  echo "      provider stores ciphertext - which is what makes a general-"
+  echo "      purpose cloud account an acceptable home for this material."
+  echo
+  echo "      That protection is only as good as the keys. The crypt password"
+  echo "      AND salt live in the password vault, and there is no provider to"
+  echo "      appeal to if they are lost. Losing them loses the backup."
+  echo
+  echo "      Encryption answers confidentiality. It does NOT make this a"
+  echo "      second copy for durability unless the remote is somewhere other"
+  echo "      than the machine you are backing up."
+else
 case "$DEST" in
   *Mobile\ Documents*|*iCloud*|*Dropbox*|*Google\ Drive*|*OneDrive*)
     CLOUD_DEST=1
     echo
     echo "NOTE: destination looks cloud-synced. That is good for durability and"
-    echo "      means a third party now stores this content. If what you are"
-    echo "      backing up would matter in someone else's hands, confirm the"
-    echo "      provider is end-to-end encrypted (on iCloud that is"
+    echo "      means a third party now stores this content. These repos hold"
+    echo "      content that would matter in someone else's hands, so"
+    echo "      confirm the provider is end-to-end encrypted (on iCloud that is"
     echo "      Advanced Data Protection, off by default) before relying on it."
     echo
     echo "      End-to-end protection does NOT survive sharing. A shared link or"
     echo "      shared folder hands the content to someone who may not have it"
     echo "      enabled. Keep these trees unshared." ;;
 esac
+fi
 
-SRC_DEV="$(df "$REPO_ROOT" 2>/dev/null | awk 'NR==2{print $1}')"
-DST_DEV="$(df "$DEST" 2>/dev/null | awk 'NR==2{print $1}')"
+# Same-volume check is meaningless for a remote - there is no local device
+# to compare against. Skipped explicitly rather than silently producing
+# nothing, so the absence of the usual note is not mistaken for the absence
+# of a problem.
+
+SRC_DEV=""; DST_DEV=""
+if [ "$DEST_KIND" = "path" ]; then
+  SRC_DEV="$(df "$REPO_ROOT" 2>/dev/null | awk 'NR==2{print $1}')"
+  DST_DEV="$(df "$DEST" 2>/dev/null | awk 'NR==2{print $1}')"
+fi
 if [ -n "$SRC_DEV" ] && [ "$SRC_DEV" = "$DST_DEV" ]; then
   echo
   if [ "$CLOUD_DEST" -eq 1 ]; then
@@ -277,21 +420,76 @@ if [ "$DRY_RUN" -eq 1 ]; then
 else
   echo
   COPIED=0
+  FAILED=0
   for p in "${RESOLVED[@]}"; do
-    target="$DEST/$(dirname "$p")"
-    mkdir -p "$target"
-    if rsync -a "$p" "$target/" 2>/dev/null; then
-      COPIED=$((COPIED + 1))
+    if [ "$DEST_KIND" = "rclone" ]; then
+      # `rclone copy`, NEVER `rclone sync`.
+      #
+      # This mirror is deliberately ADDITIVE - see the header. `rsync -a`
+      # without `--delete` does not remove anything from the destination,
+      # and `rclone copy` is its equivalent. `rclone sync` deletes from the
+      # destination to match the source, which would make the backup
+      # faithfully reproduce the exact deletion it exists to survive.
+      #
+      # One word, and the whole point of the script is gone. Do not
+      # "optimise" this into a sync to save remote storage.
+      if [ -d "$p" ]; then
+        rc_dest="$RCLONE_TARGET/$p"
+      else
+        rc_dest="$RCLONE_TARGET/$(dirname "$p")"
+      fi
+      # --create-empty-src-dirs because rclone skips empty directories and
+      # rsync does not. No data is lost either way, but a restored tree that
+      # is missing a folder invites "what was in there?" at exactly the
+      # moment nobody can answer it. An empty directory can also carry
+      # intent - a placeholder someone made on purpose.
+      if rclone copy "$p" "$rc_dest" --create-empty-src-dirs 2>&1; then
+        COPIED=$((COPIED + 1))
+      else
+        echo "  ERROR: rclone copy failed for $p" >&2
+        FAILED=$((FAILED + 1))
+      fi
     else
-      echo "  WARNING: rsync failed for $p" >&2
+      target="$DEST/$(dirname "$p")"
+      mkdir -p "$target"
+      if rsync -a "$p" "$target/" 2>/dev/null; then
+        COPIED=$((COPIED + 1))
+      else
+        echo "  WARNING: rsync failed for $p" >&2
+        FAILED=$((FAILED + 1))
+      fi
     fi
   done
   echo "mirrored $COPIED of ${#RESOLVED[@]} path(s)."
-  echo "backup size: $(du -sh "$DEST" 2>/dev/null | cut -f1)"
+
+  # A partial backup that exits 0 is the same class of failure as the
+  # zero-files guard above: it reports success for something that did not
+  # happen. The manifest is written either way, so a later --check would
+  # compare against a timestamp from a run that only half worked.
+  if [ "$FAILED" -gt 0 ]; then
+    echo >&2
+    echo "ERROR: $FAILED of ${#RESOLVED[@]} path(s) FAILED TO COPY." >&2
+    echo "       This backup is incomplete. Do not treat it as a copy." >&2
+    exit 1
+  fi
+
+  if [ "$DEST_KIND" = "rclone" ]; then
+    echo "backup size: $(rclone size "$RCLONE_TARGET" 2>/dev/null | tail -1)"
+  else
+    echo "backup size: $(du -sh "$DEST" 2>/dev/null | cut -f1)"
+  fi
 fi
 
 # ----------------------------------------------------------------- manifest
-if [ "$MANIFEST_MODE" != "none" ]; then
+# --dry-run must not write the manifest. It was doing so before the staleness
+# check existed, which was merely untidy: the file is the record of what the
+# last real run saw, and a run that copied nothing has no business updating it.
+# Once --check started reading the manifest's timestamp to detect a backup that
+# has stopped running, the same bug became load-bearing - a --dry-run, which
+# copies nothing by definition, reset a 90-day staleness warning to "0 days
+# ago". A command that copies nothing silencing the warning that nothing has
+# been copied is the exact failure this script exists to prevent.
+if [ "$MANIFEST_MODE" != "none" ] && [ "$DRY_RUN" -eq 0 ]; then
   M="$REPO_ROOT/PRIVATE_MANIFEST.md"
   {
     echo "# Private content manifest"
