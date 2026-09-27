@@ -60,6 +60,43 @@ else
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# Private-content tripwire.
+#
+# Gitignored content has no remote and no history, so nothing else in this
+# script can see it and `git status` will never report it missing. If it is
+# deleted, the only signal is someone eventually noticing. This runs the check
+# at session start, which is the earliest moment anyone is looking, and while
+# the backup mirror still holds the files.
+#
+# It only complains about a DECREASE against PRIVATE_MANIFEST.md. Private
+# content grows in normal use and a check that fires on growth gets ignored.
+#
+# Exit 3 is not a failure. It means an `external:` source (a cloud folder
+# outside the repo) cannot be seen on this machine yet - usually one that has
+# not finished syncing. The right action there is to wait, not to stop all
+# work, and backup-private.sh already refuses a real run until it clears.
+# Anything else non-zero means files have gone missing or the config is
+# broken, and that does stop the session.
+#
+# Conditional so this script stays byte-identical across every repo, including
+# ones with no private content at all.
+if [ -x scripts/backup-private.sh ] && [ -f .private-paths ]; then
+  echo
+  scripts/backup-private.sh --check
+  rc=$?
+  if [ "$rc" -eq 3 ]; then
+    echo
+    echo "sync: an external private source is not visible yet (see above)." >&2
+    echo "      Continue with other work; do not run the backup until it clears." >&2
+  elif [ "$rc" -ne 0 ]; then
+    echo
+    echo "sync: private-content check FAILED. Read the message above before" >&2
+    echo "      doing any other work in this repo." >&2
+    exit 1
+  fi
+fi
+
 # No submodules? Then the pull was the whole job.
 if [ ! -f .gitmodules ]; then
   echo

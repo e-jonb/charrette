@@ -78,6 +78,8 @@ for arg in "$@"; do
       echo "  --check          TRIPWIRE. Compare live private files against the count"
       echo "                   recorded in PRIVATE_MANIFEST.md and fail if any have"
       echo "                   gone missing. Copies nothing. Run it at session start."
+      echo "                   Exit 0 OK, 1 files missing or config broken, 3 an"
+      echo "                   external: source cannot be seen on this machine."
       echo "  --safe-manifest  manifest lists directories and counts, not filenames"
       echo "  --no-manifest    do not write PRIVATE_MANIFEST.md"
       echo "  --dry-run        report what would be copied, copy nothing"
@@ -202,6 +204,16 @@ echo
 # in RECOVERY.md mean the same thing on any machine.
 RESOLVED=()
 RESOLVED_AS=()
+# 1 where the source is an `external:` label, 0 otherwise. Only external
+# sources can be empty for a reason other than having no content - see the
+# per-source guard below.
+RESOLVED_EXT=()
+
+# External sources this machine cannot see right now, and why. Only ever
+# populated under --check; a real run stops instead. See "Can't see is not
+# lost" below the tripwire.
+UNSEEN=()
+UNSEEN_WHY=()
 
 # `.private-sources` is the source-side twin of `.private-backup-dir`: one
 # `label = path` per line, `#` comments, `~` expanded. Read lazily so a repo
@@ -248,7 +260,7 @@ for entry in "${DECLARED[@]}"; do
     dirname:*)
       name="${entry#dirname:}"
       while IFS= read -r d; do
-        [ -n "$d" ] && { RESOLVED+=("${d#./}"); RESOLVED_AS+=("${d#./}"); }
+        [ -n "$d" ] && { RESOLVED+=("${d#./}"); RESOLVED_AS+=("${d#./}"); RESOLVED_EXT+=(0); }
       done < <(find . -type d -name "$name" -not -path './.git/*' 2>/dev/null | sort)
       ;;
     external:*)
@@ -263,7 +275,26 @@ for entry in "${DECLARED[@]}"; do
           echo "       backup layout. Pick a different label." >&2
           exit 1 ;;
       esac
+      # A label becomes a path segment under the destination, so it has to be
+      # a plain name. Tested 2026-09-27: `external:../escape` exited 0 and
+      # wrote OUTSIDE the destination entirely, and `external:.` dropped files
+      # into the destination root beside the structural directories. Both
+      # silent. The reserved-name guard above caught the two names it knew
+      # about; it did not catch a label that was shaped like a path.
+      case "$label" in
+        ""|.|..|*/*|.*)
+          echo "ERROR: 'external:$label' is not a usable label." >&2
+          echo "       A label becomes a directory name inside the backup, so it" >&2
+          echo "       must be a plain name - letters, digits, dash, underscore." >&2
+          echo "       No slashes, and not '.' or '..': those would write outside" >&2
+          echo "       the backup directory or into its root, silently." >&2
+          exit 1 ;;
+      esac
       if ! src="$(lookup_source "$label")"; then
+        if [ "$CHECK_ONLY" -eq 1 ]; then
+          UNSEEN+=("$label"); UNSEEN_WHY+=("not mapped in .private-sources on this machine")
+          continue
+        fi
         # Never a skip. A declared-but-unmapped label resolving silently to
         # nothing is the exact failure this mechanism was built to remove;
         # reintroducing it as the fix would be worse than not having it.
@@ -289,6 +320,10 @@ for entry in "${DECLARED[@]}"; do
         exit 1
       fi
       if [ ! -e "$src" ]; then
+        if [ "$CHECK_ONLY" -eq 1 ]; then
+          UNSEEN+=("$label"); UNSEEN_WHY+=("mapped to $src, which does not exist")
+          continue
+        fi
         echo >&2
         echo "ERROR: external:$label maps to a path that does not exist." >&2
         echo >&2
@@ -303,13 +338,50 @@ for entry in "${DECLARED[@]}"; do
         echo "  NOTHING WAS BACKED UP." >&2
         exit 1
       fi
-      RESOLVED+=("$src"); RESOLVED_AS+=("$label")
+      RESOLVED+=("$src"); RESOLVED_AS+=("$label"); RESOLVED_EXT+=(1)
       ;;
     *)
-      [ -e "$entry" ] && { RESOLVED+=("$entry"); RESOLVED_AS+=("$entry"); }
+      [ -e "$entry" ] && { RESOLVED+=("$entry"); RESOLVED_AS+=("$entry"); RESOLVED_EXT+=(0); }
       ;;
   esac
 done
+
+# Two sources landing on the same name. RESOLVED_AS is where each source goes
+# under the destination, so a repeat means two sources written into one
+# folder. Tested 2026-09-27 with `external:_private` beside `dirname:_private`:
+# the external copy overwrote in-repo files at the same relative path,
+# --backup-dir filed the real in-repo content under archive/ on every run,
+# live/ held whichever source copied last, and the manifest got two rows with
+# one label, breaking the per-source sum the tripwire relies on. Exit 0, counts
+# reconciled, nothing looked wrong. Also catches one label declared twice.
+#
+# UNSEEN labels are included so --check catches the collision even on a
+# machine where the external source is not mapped yet. Plain loops, because
+# bash 3.2 has no associative arrays.
+ALL_AS=(${RESOLVED_AS+"${RESOLVED_AS[@]}"} ${UNSEEN+"${UNSEEN[@]}"})
+DUPES=()
+a=0
+while [ "$a" -lt "${#ALL_AS[@]}" ]; do
+  b=$((a + 1))
+  while [ "$b" -lt "${#ALL_AS[@]}" ]; do
+    [ "${ALL_AS[$a]}" = "${ALL_AS[$b]}" ] && DUPES+=("${ALL_AS[$a]}")
+    b=$((b + 1))
+  done
+  a=$((a + 1))
+done
+if [ "${#DUPES[@]}" -gt 0 ]; then
+  echo >&2
+  echo "ERROR: more than one declared source lands on the same name:" >&2
+  for d in "${DUPES[@]}"; do echo "         $d" >&2; done
+  echo >&2
+  echo "  Each source becomes a folder of that name inside the backup, so these" >&2
+  echo "  would be written into one folder, overwriting each other silently." >&2
+  echo "  Rename the external: label, or remove the repeated line from" >&2
+  echo "  .private-paths." >&2
+  echo >&2
+  echo "  NOTHING WAS BACKED UP." >&2
+  exit 1
+fi
 
 TOTAL_FILES=0
 EMPTY_PATHS=()
@@ -326,7 +398,7 @@ for p in ${RESOLVED+"${RESOLVED[@]}"}; do
     n=1
   fi
   TOTAL_FILES=$((TOTAL_FILES + n))
-  [ "$n" -eq 0 ] && EMPTY_PATHS+=("${RESOLVED_AS[$i]}")
+  [ "$n" -eq 0 ] && [ "${RESOLVED_EXT[$i]}" -eq 1 ] && EMPTY_PATHS+=("${RESOLVED_AS[$i]}")
   if [ "$p" = "${RESOLVED_AS[$i]}" ]; then
     printf '  %-48s %s file(s)\n' "$p" "$n"
   else
@@ -341,7 +413,7 @@ echo "declared: ${#DECLARED[@]} pattern(s) -> resolved: ${#RESOLVED[@]} path(s),
 # A backup that reports success having copied nothing is the failure mode this
 # whole workspace keeps rediscovering. Zero is always an anomaly worth an exit
 # code: either nothing private exists yet, or a declaration has gone stale.
-if [ "$TOTAL_FILES" -eq 0 ]; then
+if [ "$TOTAL_FILES" -eq 0 ] && [ "${#UNSEEN[@]}" -eq 0 ]; then
   echo
   echo "NOTHING BACKED UP - 0 files matched .private-paths." >&2
   echo "Either no private content exists in this repo yet, or a declared path" >&2
@@ -350,23 +422,42 @@ if [ "$TOTAL_FILES" -eq 0 ]; then
   exit 1
 fi
 
-# PER-PATH zero, which the total above cannot see. With _private at 89 files
-# and a second source at 0, the total is 89 and nothing trips - so a declared
-# source is silently not backed up while the run reports success. That is a
-# live case on a fresh machine where a cloud folder exists but has not finished
-# syncing: `[ -e ]` passes and there is nothing inside.
+# PER-SOURCE zero for `external:` sources, which the total above cannot see.
+# With _private at 89 files and an external source at 0, the total is 89 and
+# nothing trips - so the external source is silently not backed up while the
+# run reports success. That is a live case on a fresh machine where a cloud
+# folder exists but has not finished syncing: `[ -e ]` passes and there is
+# nothing inside.
 #
-# No override flag, deliberately. The whole-total guard above already treats
-# empty as an error rather than a quiet success, so this is the same rule
-# applied per path. An override is a thing someone sets during one sync hiccup
+# EXTERNAL ONLY, and that scope is the fix for a regression. The first version
+# (2026-09-27) applied this to every resolved path, and `dirname:_private` is a
+# glob: in one repo it matched a per-person `_private` folder (2 files) and
+# two empty placeholders, one waiting for a second person. Judging each glob match
+# as its own declaration failed a healthy repo at every session start. An
+# in-repo folder cannot be mid-sync; empty there is a normal state, and the
+# whole-total guard above still catches a repo where everything is empty.
+#
+# The first version also said a legitimately empty source should be
+# undeclared. That was wrong: undeclare `documents/` and its first real file
+# is silently not backed up, which is worse than the bug.
+#
+# No override flag. An override is a thing someone sets during one sync hiccup
 # and never removes, which makes it a diligence control - the category ADR-010
-# just rejected Cryptomator over. The fix for a legitimately empty source is to
-# stop declaring it, which is one line. If it ever turns out to be needed,
-# adding the flag later is easy; taking back a flag people have already set is
-# not.
+# rejected Cryptomator over.
+#
+# Under --check an empty external source is not an error but a source this
+# machine cannot see yet. It joins UNSEEN and is reported with exit 3. A real
+# run still stops here, which is the property that matters: nothing is copied
+# and no manifest is written from a machine missing a source.
+if [ "$CHECK_ONLY" -eq 1 ] && [ "${#EMPTY_PATHS[@]}" -gt 0 ]; then
+  for e in "${EMPTY_PATHS[@]}"; do
+    UNSEEN+=("$e"); UNSEEN_WHY+=("exists but holds no files")
+  done
+  EMPTY_PATHS=()
+fi
 if [ "${#EMPTY_PATHS[@]}" -gt 0 ]; then
   echo
-  echo "ERROR: declared source(s) resolved to ZERO files:" >&2
+  echo "ERROR: external source(s) resolved to ZERO files:" >&2
   for e in "${EMPTY_PATHS[@]}"; do echo "         $e" >&2; done
   echo >&2
   echo "  The other sources have content, so the total looks healthy and" >&2
@@ -381,6 +472,36 @@ if [ "${#EMPTY_PATHS[@]}" -gt 0 ]; then
   exit 1
 fi
 
+# ------------------------------------------------------ can't see is not lost
+# Under --check, an `external:` source that is unmapped, absent or empty on
+# this machine is reported with exit 3, not 1. sync.sh runs --check at session
+# start and treats 1 as "stop all work", which is right for files that have
+# gone missing and wrong for a Drive folder that needs five more minutes to
+# sync. The action is different, so the signal is different.
+#
+# The count comparison below then covers only the sources that ARE visible,
+# using the per-source table the manifest has carried since 2026-09-27. A
+# source you cannot see would otherwise read as every one of its files gone.
+report_unseen() {
+  local k=0
+  echo
+  echo "------------------------------------------------------------------------" >&2
+  echo "  EXTERNAL SOURCE NOT VISIBLE ON THIS MACHINE" >&2
+  echo "" >&2
+  while [ "$k" -lt "${#UNSEEN[@]}" ]; do
+    echo "    external:${UNSEEN[$k]} - ${UNSEEN_WHY[$k]}" >&2
+    k=$((k + 1))
+  done
+  echo "" >&2
+  echo "  Nothing is known to be lost. Do NOT run the backup until this clears:" >&2
+  echo "  a real run stops here anyway rather than record a smaller baseline." >&2
+  echo "" >&2
+  echo "  If a cloud folder is still syncing, wait and re-run --check. If this" >&2
+  echo "  machine has never been set up, add the mapping to .private-sources." >&2
+  echo "  Other work in this repo is fine." >&2
+  echo "------------------------------------------------------------------------" >&2
+}
+
 # -------------------------------------------------------------------- tripwire
 # Backups protect against loss. They do not TELL you loss happened, and a
 # backup you do not know you need is a backup you restore from too late -
@@ -391,13 +512,38 @@ fi
 # use, and a check that fires on growth gets switched off within a week.
 if [ -f "$REPO_ROOT/PRIVATE_MANIFEST.md" ]; then
   RECORDED="$(grep -oE '\*\*Total: [0-9]+ file' "$REPO_ROOT/PRIVATE_MANIFEST.md" 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+  SCOPE_NOTE=""
+  if [ "${#UNSEEN[@]}" -gt 0 ]; then
+    if grep -q '^| Source | Files |' "$REPO_ROOT/PRIVATE_MANIFEST.md"; then
+      # Sum the recorded counts of every source NOT in UNSEEN. A source that
+      # was recorded and has since vanished outright is still summed, so it
+      # still reads as loss - only the ones this machine cannot see drop out.
+      RECORDED="$(UNSEEN_LIST="$(printf '%s\n' "${UNSEEN[@]}")" awk '
+        BEGIN { n = split(ENVIRON["UNSEEN_LIST"], u, "\n"); for (i = 1; i <= n; i++) if (u[i] != "") drop[u[i]] = 1 }
+        /^\| Source \| Files \|/ { t = 1; next }
+        t && /^[[:space:]]*$/ { exit }
+        t && /^\| `/ { split($0, f, "|"); lab = f[2]; gsub(/^[[:space:]]*`|`[[:space:]]*$/, "", lab)
+                       c = f[3]; gsub(/[[:space:]]/, "", c); if (!(lab in drop)) sum += c }
+        END { print sum + 0 }' "$REPO_ROOT/PRIVATE_MANIFEST.md")"
+      SCOPE_NOTE=" (sources visible on this run)"
+    else
+      # A manifest from before the per-source table has only a total, and the
+      # total includes the source we cannot see. Comparing against it would
+      # report that source's every file as missing. Say so rather than guess.
+      echo
+      echo "NOTE: count comparison SKIPPED. PRIVATE_MANIFEST.md predates the" >&2
+      echo "      per-source table, so it cannot be split to exclude the source" >&2
+      echo "      that is not visible. The next real run adds the table." >&2
+      RECORDED=""
+    fi
+  fi
   if [ -n "$RECORDED" ] && [ "$TOTAL_FILES" -lt "$RECORDED" ]; then
     MISSING=$((RECORDED - TOTAL_FILES))
     echo
     echo "########################################################################" >&2
     echo "  PRIVATE FILES HAVE GONE MISSING" >&2
     echo "" >&2
-    echo "  PRIVATE_MANIFEST.md recorded $RECORDED file(s). $TOTAL_FILES are present." >&2
+    echo "  PRIVATE_MANIFEST.md recorded $RECORDED file(s)$SCOPE_NOTE. $TOTAL_FILES are present." >&2
     echo "  $MISSING file(s) are gone." >&2
     echo "" >&2
     echo "  DO NOT RUN THIS SCRIPT WITHOUT --check UNTIL YOU KNOW WHY." >&2
@@ -428,6 +574,7 @@ if [ -f "$REPO_ROOT/PRIVATE_MANIFEST.md" ]; then
     echo "" >&2
     echo "  If it WAS intentional, re-run without --check to update the manifest." >&2
     echo "########################################################################" >&2
+    [ "${#UNSEEN[@]}" -gt 0 ] && report_unseen
     exit 1
   fi
   # ---------------------------------------------------- staleness
@@ -469,14 +616,21 @@ if [ -f "$REPO_ROOT/PRIVATE_MANIFEST.md" ]; then
 
   if [ "$CHECK_ONLY" -eq 1 ]; then
     echo
-    echo "tripwire OK: $TOTAL_FILES file(s) present, manifest recorded ${RECORDED:-none}."
+    if [ -z "$RECORDED" ] && [ "${#UNSEEN[@]}" -gt 0 ]; then
+      # Never print "OK" for a comparison that did not happen.
+      echo "tripwire NOT RUN: $TOTAL_FILES file(s) present, no per-source baseline to compare."
+    else
+      echo "tripwire OK: $TOTAL_FILES file(s) present, manifest recorded ${RECORDED:-none}$SCOPE_NOTE."
+    fi
     [ -n "$GENERATED" ] && echo "             last run $GENERATED (${AGE_DAYS:-?} days ago, warn over $STALE_DAYS)."
+    if [ "${#UNSEEN[@]}" -gt 0 ]; then report_unseen; exit 3; fi
     exit 0
   fi
 elif [ "$CHECK_ONLY" -eq 1 ]; then
   echo
   echo "no PRIVATE_MANIFEST.md yet - nothing to compare against."
   echo "Run without --check once to establish a baseline."
+  if [ "${#UNSEEN[@]}" -gt 0 ]; then report_unseen; exit 3; fi
   exit 0
 fi
 
@@ -597,7 +751,16 @@ else
   # The archive is a SIBLING of the live tree, never inside it. rclone refuses
   # an overlap outright ("destination and parameter to --backup-dir mustn't
   # overlap", exit 7), which the FAILED check below turns into a hard stop.
-  ARCHIVE_DATE="$(date '+%Y-%m-%d')"
+  # Timestamp, not just the date. Tested 2026-09-27: with a date-only key, two
+  # bad edits on the SAME DAY each followed by a backup run left the original
+  # unrecoverable - the second run's archive write overwrote the first's, and
+  # `grep -rl` found zero surviving copies. CLAUDE.md has the assistant run this
+  # at session end, and there is routinely more than one session in a day, so
+  # that is the normal case rather than an edge one.
+  #
+  # It still sorts and reads as a date, so "the version from before yesterday"
+  # works exactly as before.
+  ARCHIVE_DATE="$(date '+%Y-%m-%dT%H%M%S')"
   idx=0
   for p in "${RESOLVED[@]}"; do
     as="${RESOLVED_AS[$idx]}"
@@ -664,7 +827,7 @@ else
       # (exit 7). rsync has no such restriction, so the current copy stays
       # where it has always been - at <dest>/<label>/ - and the archive is a
       # sibling at <dest>/archive/. Moving existing local backups under a new
-      # live/ prefix would strand existing local backups of other repos
+      # live/ prefix would strand their existing
       # content at the old paths, additive and therefore never cleaned up,
       # where a future restore could grab the stale copy. Not worth the
       # symmetry. RECOVERY.md states both layouts.
@@ -688,6 +851,18 @@ else
     echo "ERROR: $FAILED of ${#RESOLVED[@]} path(s) FAILED TO COPY." >&2
     echo "       This backup is incomplete. Do not treat it as a copy." >&2
     exit 1
+  fi
+
+  # Prune empty archive directories. The mkdir above is unconditional and has
+  # to be: tested 2026-09-27, rsync given a --backup-dir whose parent does not
+  # exist archives NOTHING and says nothing about it, so creating it eagerly is
+  # the only safe order. The cost is a directory per run whether or not anything
+  # was superseded, and with a timestamped key that is one per run rather than
+  # one per day. Since recovery means "list the archive, pick a version", a
+  # listing that is mostly empty directories is a listing nobody can use.
+  if [ "$DEST_KIND" != "rclone" ] && [ -d "$DEST/archive" ]; then
+    find "$DEST/archive" -type d -empty -delete 2>/dev/null
+    [ -d "$DEST/archive" ] || true
   fi
 
   if [ "$DEST_KIND" != "rclone" ] && [ -d "$DEST/archive" ]; then
@@ -744,6 +919,10 @@ if [ "$MANIFEST_MODE" != "none" ] && [ "$DRY_RUN" -eq 0 ]; then
     echo "which is what a bare number could never tell you. If a source you expect"
     echo "is missing from this list, that is the finding."
     echo
+    # The --check tripwire parses this table back: it starts at the header row
+    # below and ENDS AT THE FIRST BLANK LINE after it. Keep the blank `echo`
+    # after the loop, and keep the header text exact, or the per-source
+    # comparison silently reads the wrong rows.
     echo "| Source | Files |"
     echo "|---|---|"
     mi=0
