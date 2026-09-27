@@ -21,3 +21,9 @@ node_modules/
 # travel to another machine or to anyone who clones this repo, so relying on it
 # means the file is protected only where someone happened to set it up.
 .claude/settings.local.json
+
+# Machine-local map from an `external:` label in .private-paths to where
+# that folder actually is on THIS machine. Never committed: the path contains
+# a username and is wrong on every other machine, and committing it is the
+# problem the label mechanism exists to prevent, arriving from the other side.
+.private-sources

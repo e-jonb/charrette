@@ -100,6 +100,17 @@ Create .private-paths with one entry per line:
   records                 a literal file or directory, relative to repo root
   documents/print-ready
   dirname:_private        every directory with this name, at any depth
+  external:sm-drive       a source OUTSIDE the repo, by label
+
+An `external:` label needs a location, and that goes in `.private-sources`,
+which is gitignored:
+
+  sm-drive = /absolute/path/to/the/folder
+
+This file is tracked and that one is not, on purpose. An absolute path in a
+tracked file is wrong on every machine but the one that wrote it - including
+your own second machine - and it fails quietly, resolving to nothing while the
+run still reports success. The declaration is shared; the location is local.
 
 Optional directive, anywhere in the file:
 
@@ -174,30 +185,154 @@ echo "destination: $DEST  ($DEST_SRC)"
 echo
 
 # ------------------------------------------------------------------- resolve
+#
+# RESOLVED holds source paths. RESOLVED_AS holds where each one lands under the
+# destination. For everything except an `external:` label the two are the same,
+# which is why this was a single array until labels existed.
+#
+# `external:<label>` exists because a source outside the repo cannot have its
+# location committed. `.private-paths` is TRACKED, so an absolute path in it is
+# wrong on every machine but the one that wrote it - including the owner's own
+# second machine, since these repos sync across more than one. The location
+# lives in `.private-sources`, which is gitignored, and the label is what both
+# the tracked declaration and the backup layout use.
+#
+# The destination layout is part of the restore contract: `<dest>/<label>/...`
+# is stable no matter whose laptop ran the script, which is what makes a path
+# in RECOVERY.md mean the same thing on any machine.
 RESOLVED=()
+RESOLVED_AS=()
+
+# `.private-sources` is the source-side twin of `.private-backup-dir`: one
+# `label = path` per line, `#` comments, `~` expanded. Read lazily so a repo
+# declaring no external labels never needs the file to exist.
+# Logical size, not allocated blocks. `du` reports blocks, and a cloud-evicted
+# file has none - a 2 MB file that the provider has offloaded reads as 0 B,
+# verified 2026-09-23 with Optimize Mac Storage on. That made the manifest's
+# size column swing with whatever happened to be evicted, and it ruled out any
+# size-based check, because one built on `du` would cry wolf every time the
+# provider reclaimed space. `stat -f %z` is the file's real size and is stable
+# under eviction.
+logical_size() {
+  local b
+  if [ -d "$1" ]; then
+    b=$(find "$1" -type f -exec stat -f '%z' {} \; 2>/dev/null | awk '{s+=$1} END {print s+0}')
+  else
+    b=$(stat -f '%z' "$1" 2>/dev/null || echo 0)
+  fi
+  awk -v b="${b:-0}" 'BEGIN{
+    if (b>=1073741824) printf "%.1fG", b/1073741824;
+    else if (b>=1048576) printf "%.1fM", b/1048576;
+    else if (b>=1024) printf "%.0fK", b/1024;
+    else printf "%dB", b}'
+}
+
+lookup_source() {
+  local want="$1" line key val
+  [ -f .private-sources ] || return 1
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    case "$line" in *=*) ;; *) continue ;; esac
+    key="$(printf '%s' "${line%%=*}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    val="$(printf '%s' "${line#*=}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    if [ "$key" = "$want" ]; then
+      printf '%s' "${val/#\~/$HOME}"
+      return 0
+    fi
+  done < .private-sources
+  return 1
+}
+
 for entry in "${DECLARED[@]}"; do
   case "$entry" in
     dirname:*)
       name="${entry#dirname:}"
       while IFS= read -r d; do
-        [ -n "$d" ] && RESOLVED+=("${d#./}")
+        [ -n "$d" ] && { RESOLVED+=("${d#./}"); RESOLVED_AS+=("${d#./}"); }
       done < <(find . -type d -name "$name" -not -path './.git/*' 2>/dev/null | sort)
       ;;
+    external:*)
+      label="${entry#external:}"
+      # `live` and `archive` are structural names in the destination layout.
+      # A label using either would write into the archive tree or be shadowed
+      # by it, silently.
+      case "$label" in
+        live|archive)
+          echo "ERROR: 'external:$label' uses a reserved name." >&2
+          echo "       'live' and 'archive' are structural directories in the" >&2
+          echo "       backup layout. Pick a different label." >&2
+          exit 1 ;;
+      esac
+      if ! src="$(lookup_source "$label")"; then
+        # Never a skip. A declared-but-unmapped label resolving silently to
+        # nothing is the exact failure this mechanism was built to remove;
+        # reintroducing it as the fix would be worse than not having it.
+        #
+        # No prompt, either. This script runs unattended - CLAUDE.md has the
+        # assistant run it at session end and sync.sh runs --check at session
+        # start - so a prompt hangs or gets answered by tooling. And a human
+        # prompted for a path at the end of a long session will paste
+        # something plausible, which backs up the wrong tree and writes that
+        # into the manifest as the new baseline. The message is the guidance.
+        echo >&2
+        echo "ERROR: '.private-paths' declares external:$label but nothing maps it." >&2
+        echo >&2
+        echo "  Add this line to .private-sources in the repo root:" >&2
+        echo >&2
+        echo "      $label = /absolute/path/to/the/folder" >&2
+        echo >&2
+        echo "  That file is gitignored on purpose. The declaration is tracked so" >&2
+        echo "  every machine agrees the source exists; the location is local" >&2
+        echo "  because it differs per machine and per person." >&2
+        echo >&2
+        echo "  NOTHING WAS BACKED UP." >&2
+        exit 1
+      fi
+      if [ ! -e "$src" ]; then
+        echo >&2
+        echo "ERROR: external:$label maps to a path that does not exist." >&2
+        echo >&2
+        echo "      $label = $src" >&2
+        echo >&2
+        echo "  Fix the mapping in .private-sources, or remove external:$label" >&2
+        echo "  from .private-paths if this source is gone for good." >&2
+        echo >&2
+        echo "  If the path looks right, check whether a cloud folder has" >&2
+        echo "  finished syncing - the folder can be absent on a fresh machine." >&2
+        echo >&2
+        echo "  NOTHING WAS BACKED UP." >&2
+        exit 1
+      fi
+      RESOLVED+=("$src"); RESOLVED_AS+=("$label")
+      ;;
     *)
-      [ -e "$entry" ] && RESOLVED+=("$entry")
+      [ -e "$entry" ] && { RESOLVED+=("$entry"); RESOLVED_AS+=("$entry"); }
       ;;
   esac
 done
 
 TOTAL_FILES=0
+EMPTY_PATHS=()
+i=0
 for p in ${RESOLVED+"${RESOLVED[@]}"}; do
   if [ -d "$p" ]; then
+    # NOT filtering .DS_Store here, deliberately. Excluding it is tidier and
+    # was tried on 2026-09-27 - it changed one repo's count from 391 to 375
+    # and tripped "PRIVATE FILES HAVE GONE MISSING" on a repo holding SSNs,
+    # because the recorded baseline counted them. Changing what counts as a
+    # file silently re-baselines every repo's tripwire. Not worth it.
     n=$(find "$p" -type f 2>/dev/null | wc -l | tr -d ' ')
   else
     n=1
   fi
   TOTAL_FILES=$((TOTAL_FILES + n))
-  printf '  %-48s %s file(s)\n' "$p" "$n"
+  [ "$n" -eq 0 ] && EMPTY_PATHS+=("${RESOLVED_AS[$i]}")
+  if [ "$p" = "${RESOLVED_AS[$i]}" ]; then
+    printf '  %-48s %s file(s)\n' "$p" "$n"
+  else
+    printf '  %-48s %s file(s)\n' "${RESOLVED_AS[$i]} -> $p" "$n"
+  fi
+  i=$((i + 1))
 done
 
 echo
@@ -212,6 +347,37 @@ if [ "$TOTAL_FILES" -eq 0 ]; then
   echo "Either no private content exists in this repo yet, or a declared path" >&2
   echo "is wrong. No backup was written. This is deliberately an error rather" >&2
   echo "than a quiet success." >&2
+  exit 1
+fi
+
+# PER-PATH zero, which the total above cannot see. With _private at 89 files
+# and a second source at 0, the total is 89 and nothing trips - so a declared
+# source is silently not backed up while the run reports success. That is a
+# live case on a fresh machine where a cloud folder exists but has not finished
+# syncing: `[ -e ]` passes and there is nothing inside.
+#
+# No override flag, deliberately. The whole-total guard above already treats
+# empty as an error rather than a quiet success, so this is the same rule
+# applied per path. An override is a thing someone sets during one sync hiccup
+# and never removes, which makes it a diligence control - the category ADR-010
+# just rejected Cryptomator over. The fix for a legitimately empty source is to
+# stop declaring it, which is one line. If it ever turns out to be needed,
+# adding the flag later is easy; taking back a flag people have already set is
+# not.
+if [ "${#EMPTY_PATHS[@]}" -gt 0 ]; then
+  echo
+  echo "ERROR: declared source(s) resolved to ZERO files:" >&2
+  for e in "${EMPTY_PATHS[@]}"; do echo "         $e" >&2; done
+  echo >&2
+  echo "  The other sources have content, so the total looks healthy and" >&2
+  echo "  nothing else would have caught this. A source that resolves to" >&2
+  echo "  nothing is not backed up." >&2
+  echo >&2
+  echo "  Most likely: a cloud folder that has not finished syncing, a" >&2
+  echo "  mapping in .private-sources pointing one level too high, or a" >&2
+  echo "  declaration that has outlived its content." >&2
+  echo >&2
+  echo "  NOTHING WAS BACKED UP." >&2
   exit 1
 fi
 
@@ -421,7 +587,21 @@ else
   echo
   COPIED=0
   FAILED=0
+  # Dated archive for superseded versions. Additive copy already means a
+  # DELETED file survives - it is simply never removed from the destination.
+  # It does nothing for a file CLOBBERED by a bad edit, where the backup
+  # faithfully copies the damage over the good copy, and that is the commoner
+  # mistake. --backup-dir moves the version being replaced into a dated folder
+  # instead of overwriting it.
+  #
+  # The archive is a SIBLING of the live tree, never inside it. rclone refuses
+  # an overlap outright ("destination and parameter to --backup-dir mustn't
+  # overlap", exit 7), which the FAILED check below turns into a hard stop.
+  ARCHIVE_DATE="$(date '+%Y-%m-%d')"
+  idx=0
   for p in "${RESOLVED[@]}"; do
+    as="${RESOLVED_AS[$idx]}"
+    idx=$((idx + 1))
     if [ "$DEST_KIND" = "rclone" ]; then
       # `rclone copy`, NEVER `rclone sync`.
       #
@@ -433,26 +613,63 @@ else
       #
       # One word, and the whole point of the script is gone. Do not
       # "optimise" this into a sync to save remote storage.
+      # Destination is the LABEL, not the source's own path. An external
+      # source must not reproduce a home-directory layout in the backup:
+      # two machines would build two parallel trees in one remote, and
+      # every path in RECOVERY.md would depend on whose laptop ran it.
       if [ -d "$p" ]; then
-        rc_dest="$RCLONE_TARGET/$p"
+        rc_dest="$RCLONE_TARGET/live/$as"
       else
-        rc_dest="$RCLONE_TARGET/$(dirname "$p")"
+        rc_dest="$RCLONE_TARGET/live/$(dirname "$as")"
+      fi
+      # Per-label, because --backup-dir is relative to THIS copy's destination.
+      # A single shared archive/<date> strips the label and lands the file at
+      # archive/<date>/sub/b.txt, so two sources clobbering the same relative
+      # path collide and an archive path stops mirroring its live path.
+      # Tested 2026-09-27: it did exactly that until this line named the label.
+      if [ -d "$p" ]; then
+        rc_archive="$RCLONE_TARGET/archive/$ARCHIVE_DATE/$as"
+      else
+        rc_archive="$RCLONE_TARGET/archive/$ARCHIVE_DATE/$(dirname "$as")"
       fi
       # --create-empty-src-dirs because rclone skips empty directories and
       # rsync does not. No data is lost either way, but a restored tree that
       # is missing a folder invites "what was in there?" at exactly the
       # moment nobody can answer it. An empty directory can also carry
       # intent - a placeholder someone made on purpose.
-      if rclone copy "$p" "$rc_dest" --create-empty-src-dirs 2>&1; then
+      if rclone copy "$p" "$rc_dest" --create-empty-src-dirs --backup-dir "$rc_archive" 2>&1; then
         COPIED=$((COPIED + 1))
       else
         echo "  ERROR: rclone copy failed for $p" >&2
         FAILED=$((FAILED + 1))
       fi
     else
-      target="$DEST/$(dirname "$p")"
-      mkdir -p "$target"
-      if rsync -a "$p" "$target/" 2>/dev/null; then
+      # Trailing slashes on both sides: copy the CONTENTS of the source into
+      # <dest>/<label>. Equivalent to the old `rsync -a src dest/` for a
+      # repo-relative path, and the only form that honours a label whose name
+      # differs from the source's basename.
+      if [ -d "$p" ]; then
+        target="$DEST/$as"; mkdir -p "$target"; src_arg="$p/"
+        rs_archive="$DEST/archive/$ARCHIVE_DATE/$as"
+      else
+        target="$DEST/$(dirname "$as")"; mkdir -p "$target"; src_arg="$p"
+        rs_archive="$DEST/archive/$ARCHIVE_DATE/$(dirname "$as")"
+      fi
+      # Same clobber protection as the rclone branch. rsync's --backup-dir is
+      # relative to the DESTINATION when given a relative path, so this is
+      # always absolute.
+      #
+      # The layout differs from rclone's on purpose. rclone needs live/
+      # because it refuses a --backup-dir overlapping its destination
+      # (exit 7). rsync has no such restriction, so the current copy stays
+      # where it has always been - at <dest>/<label>/ - and the archive is a
+      # sibling at <dest>/archive/. Moving existing local backups under a new
+      # live/ prefix would strand existing local backups of other repos
+      # content at the old paths, additive and therefore never cleaned up,
+      # where a future restore could grab the stale copy. Not worth the
+      # symmetry. RECOVERY.md states both layouts.
+      mkdir -p "$(dirname "$rs_archive")"
+      if rsync -a --backup --backup-dir="$rs_archive" "$src_arg" "$target/" 2>/dev/null; then
         COPIED=$((COPIED + 1))
       else
         echo "  WARNING: rsync failed for $p" >&2
@@ -473,8 +690,17 @@ else
     exit 1
   fi
 
+  if [ "$DEST_KIND" != "rclone" ] && [ -d "$DEST/archive" ]; then
+    rs_arch_n="$(find "$DEST/archive" -type f 2>/dev/null | wc -l | tr -d ' ')"
+    [ "${rs_arch_n:-0}" -gt 0 ] && echo "archive:     $rs_arch_n superseded version(s) under archive/"
+  fi
+
   if [ "$DEST_KIND" = "rclone" ]; then
-    echo "backup size: $(rclone size "$RCLONE_TARGET" 2>/dev/null | tail -1)"
+    # live/ only. Including the archive would overstate the current backup,
+    # and the archive grows without bound by design.
+    echo "backup size: $(rclone size "$RCLONE_TARGET/live" 2>/dev/null | tail -1)"
+    arch_n="$(rclone size "$RCLONE_TARGET/archive" 2>/dev/null | grep -oE 'Total objects: [0-9]+' | grep -oE '[0-9]+')"
+    [ -n "${arch_n:-}" ] && [ "$arch_n" -gt 0 ] && echo "archive:     $arch_n superseded version(s) under archive/"
   else
     echo "backup size: $(du -sh "$DEST" 2>/dev/null | cut -f1)"
   fi
@@ -496,6 +722,7 @@ if [ "$MANIFEST_MODE" != "none" ] && [ "$DRY_RUN" -eq 0 ]; then
     echo
     echo "**Generated:** \`scripts/backup-private.sh\` on $(date '+%Y-%m-%d %H:%M') \\"
     echo "**Mode:** $MANIFEST_MODE \\"
+    echo "**Written by:** $(hostname -s 2>/dev/null || echo unknown) \\"
     echo "**Committed on purpose:** yes"
     echo
     echo "---"
@@ -510,29 +737,53 @@ if [ "$MANIFEST_MODE" != "none" ] && [ "$DRY_RUN" -eq 0 ]; then
     echo "Regenerate it by running \`./scripts/backup-private.sh\`. **Read the diff"
     echo "before committing** - a filename can itself be private."
     echo
+    echo "## Sources resolved on this run"
+    echo
+    echo "Recorded by name, not only by count. Two machines that resolve different"
+    echo "sets produce a *named* difference here rather than a quietly lower total,"
+    echo "which is what a bare number could never tell you. If a source you expect"
+    echo "is missing from this list, that is the finding."
+    echo
+    echo "| Source | Files |"
+    echo "|---|---|"
+    mi=0
+    for p in "${RESOLVED[@]}"; do
+      as="${RESOLVED_AS[$mi]}"; mi=$((mi + 1))
+      if [ -d "$p" ]; then
+        n=$(find "$p" -type f 2>/dev/null | wc -l | tr -d ' ')
+      else
+        n=1
+      fi
+      echo "| \`$as\` | $n |"
+    done
+    echo
     if [ "$MANIFEST_MODE" = "summary" ]; then
       echo "| Path | Files | Size | Newest |"
       echo "|---|---|---|---|"
+      si=0
       for p in "${RESOLVED[@]}"; do
+        as="${RESOLVED_AS[$si]}"; si=$((si + 1))
         if [ -d "$p" ]; then
           n=$(find "$p" -type f 2>/dev/null | wc -l | tr -d ' ')
-          sz=$(du -sh "$p" 2>/dev/null | cut -f1)
+          sz=$(logical_size "$p")
           nw=$(find "$p" -type f -exec stat -f '%Sm' -t '%Y-%m-%d' {} \; 2>/dev/null | sort | tail -1)
         else
-          n=1; sz=$(du -h "$p" 2>/dev/null | cut -f1); nw=$(stat -f '%Sm' -t '%Y-%m-%d' "$p" 2>/dev/null)
+          n=1; sz=$(logical_size "$p"); nw=$(stat -f '%Sm' -t '%Y-%m-%d' "$p" 2>/dev/null)
         fi
-        echo "| \`$p\` | $n | $sz | ${nw:-–} |"
+        echo "| \`$as\` | $n | $sz | ${nw:-–} |"
       done
     else
       echo "| File | Size | Modified |"
       echo "|---|---|---|"
+      fi_=0
       for p in "${RESOLVED[@]}"; do
+        as="${RESOLVED_AS[$fi_]}"; fi_=$((fi_ + 1))
         if [ -d "$p" ]; then
           find "$p" -type f -not -name '.DS_Store' 2>/dev/null | sort | while IFS= read -r f; do
-            echo "| \`$f\` | $(du -h "$f" 2>/dev/null | cut -f1) | $(stat -f '%Sm' -t '%Y-%m-%d' "$f" 2>/dev/null) |"
+            echo "| \`$as${f#$p}\` | $(logical_size "$f") | $(stat -f '%Sm' -t '%Y-%m-%d' "$f" 2>/dev/null) |"
           done
         else
-          echo "| \`$p\` | $(du -h "$p" 2>/dev/null | cut -f1) | $(stat -f '%Sm' -t '%Y-%m-%d' "$p" 2>/dev/null) |"
+          echo "| \`$as\` | $(logical_size "$p") | $(stat -f '%Sm' -t '%Y-%m-%d' "$p" 2>/dev/null) |"
         fi
       done
     fi
