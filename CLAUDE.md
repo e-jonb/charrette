@@ -182,7 +182,7 @@ Whether it is committed or gitignored is a separate question, decided by what th
 7. `docs/DEVELOPMENT_ROADMAP.md` — phased build plan with deliverables, exit criteria, and starting prompts (always for Full Path solutions)
 8. `docs/agents/architect.md` – Tactical Architect skill (always). Must include a **session-start sequence** and an **end-of-session write**, not just the escalation guide. Without them the TA cold-starts context-blind every session and its work never finds its way back here. See **Tactical Architect Session Lifecycle** below for what both contain
 9. `docs/agents/[other-roles].md` — other agent skills as needed
-10. `CLAUDE.md` – project context for the solution repo. Include a **Multi-Machine Sync** section (if the user works across multiple machines) and a **Memory Graduation** section (always) – see the entries of those names in `knowledge/lessons-learned.md` for both patterns and ready-to-adapt section text. When you write a Multi-Machine Sync section, also copy `scripts/sync.sh` from this repo into the solution repo and mark it executable – the section tells the reader to run it, so it has to exist. **If the solution has source data (item 0), add a short Source Data section too**: where it lives in the repo, that its README says which files are real, and that it is frozen – the project replaces that source, it does not extend it
+10. `CLAUDE.md` – project context for the solution repo. Include a **Multi-Machine Sync** section (if the user works across multiple machines) and a **Memory Graduation** section (always) – see the entries of those names in `knowledge/lessons-learned.md` for both patterns and ready-to-adapt section text. When you write a Multi-Machine Sync section, also copy `scripts/sync.sh` from this repo into the solution repo and mark it executable – the section tells the reader to run it, so it has to exist. **If the solution has source data (item 0), add a short Source Data section too**: where it lives in the repo, that its README says which files are real, and that it is frozen – the project replaces that source, it does not extend it. Also copy the **Outside Services** section from this file verbatim, with the repo's own name in the User-Agent example – every repo's agent has the owner's email in context, and a rule that lives only here reaches no Tactical Architect
 11. `README.md` — project overview
 12. `SETUP_GUIDE.md` — environment and tool setup
 13. `docs/DEV_LOG.md` — initialized with this session's summary
@@ -306,6 +306,12 @@ Escalation covers TA to Studio and back. This covers the other direction, which 
 The two-tier split is worth keeping, but only while it stays cheap to cross. When crossing it costs a full re-explanation each time, people stop coming to the Studio at all – and a Studio nobody visits goes stale, which makes its next answer worse. That failure is quiet and it compounds.
 
 If the user pushes back and says they want it handled here, do it here. The split is a default, not a rule you enforce against them.
+
+## Outside Services – Identify the Tool, Never the Person
+
+Never send the owner's email address, name or any other identifying detail to an outside service – in a header, URL, query string or request body – unless the owner asks for that specific use. The owner's email is in every session's context (git config supplies it), and an API whose usage policy asks for a contact makes filling it in feel helpful. It is not. It is disclosure to a third party, and it may be logged or kept.
+
+When a service asks who is calling – a User-Agent policy like OpenStreetMap Nominatim's, an API sign-up, a form field – identify the tool, not the person: `User-Agent: my-repo-name/1.0`. If a service genuinely will not work without a personal contact, stop and ask before sending one.
 
 ## Org-Level Defaults
 
