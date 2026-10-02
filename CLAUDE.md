@@ -328,7 +328,9 @@ In this order, stopping at the first that works:
 
 **Three different things with similar names.** The **Claude-in-Chrome extension** is a browser extension paired with a claude.ai login. **CDP** is Chrome's own DevTools websocket on a local port and needs nothing installed. **Playwright** is a library that launches or attaches to a browser. They are independent: an empty connected-browsers list says nothing about whether CDP works, and a task that needs CDP has no reason to install or debug the extension.
 
-The CDP launch that works on macOS:
+The general rule, on any platform: **launch the Chrome binary directly rather than through the OS launcher, always pass `--user-data-dir`, and verify with `curl -s http://localhost:9222/json/version` before concluding anything.** Since Chrome 136, remote debugging is ignored when Chrome runs on its default profile, so the debug port silently never opens without `--user-data-dir`. The `curl` check is the part that works everywhere – if it returns nothing, the port is not open, whatever the process list says.
+
+**macOS** (adjust the binary path and process name on Linux or Windows):
 
 ```bash
 pkill -x "Google Chrome"          # closes every tab – warn the user first
@@ -339,7 +341,7 @@ pkill -x "Google Chrome"          # closes every tab – warn the user first
 curl -s http://localhost:9222/json/version   # must return JSON
 ```
 
-Run the binary, not `open -a` – that often hands off to an existing Chrome that ignores the flags. `--user-data-dir` is required, or the debug port silently never opens. Use one profile directory consistently, since a login persists per directory. Connect with `p.chromium.connect_over_cdp("http://localhost:9222")`, and never call `browser.close()` on that connection – it closes the user's browser.
+On macOS, run the binary, not `open -a` – that often hands the launch to an existing Chrome process that ignores the flags, so `ps` shows the flag while the port stays closed. Use one profile directory consistently, since a login persists per directory. Connect with `p.chromium.connect_over_cdp("http://localhost:9222")`, and never call `browser.close()` on that connection – it closes the user's browser.
 
 ## Outside Services – Identify the Tool, Never the Person
 
@@ -357,11 +359,18 @@ Every starting prompt written into `DEVELOPMENT_ROADMAP.md` must end with a **"C
 
 1. **What to stage** — list the files or directories changed, or a pattern (e.g. `apps/api/src/routes/`, `apps/web/src/pages/`)
 2. **Commit message** — format: `feat(scope): Phase X.Y.Z — short description`
-3. **Deploy intent** — one of:
-   - "Commit and push to main only (`git push origin main`) — hold for production deploy at end of phase group"
-   - "Commit, push to main, then merge production: `git checkout production && git merge main && git push && git checkout main`"
+3. **Deploy intent** – written from **the target repo's actual branches**, checked when the prompt is written (`git -C <repo> branch -r`), never from a remembered default. A prompt that says "merge production" in a repo with no `production` branch is an instruction the developer cannot run, and it can fail quietly while the push to `main` has already deployed.
 
-The Studio architect decides which deploy intent is appropriate when writing the prompt. As a rule: individual sub-phases within a group commit to main only; the final sub-phase in a group (or any phase that fixes a live bug) merges production immediately.
+   **Single-branch repo** (deploys from `main`):
+   - "Commit and push to main (`git push origin main`). **This deploys.** There is no staging step."
+
+   **Two-branch repo** (`main` for development, `production` triggers deploys):
+   - "Commit and push to main only (`git push origin main`) – hold for production deploy at end of phase group"
+   - "Commit, push to main, then merge production. First confirm the branch exists – `git branch -a | grep -qE '(^[* ] |/)production$' || { echo 'no production branch – stop and ask'; exit 1; }` – then `git checkout production && git merge main && git push && git checkout main`". The anchored pattern matters: a bare `production$` also matches `preproduction`
+
+   Whatever the setup, say what deploying does and does not guarantee – for example, hosts that scope builds to a root directory skip commits that only touch paths outside it.
+
+The Studio architect decides deploy intent when writing the prompt. As a rule: individual sub-phases within a group hold their user-visible effect until the group closes; the final sub-phase in a group, or any phase fixing a live bug, ships immediately.
 
 SA should not make commit or deploy decisions on its own — if the prompt doesn't specify, SA should ask before committing.
 
