@@ -182,7 +182,7 @@ Whether it is committed or gitignored is a separate question, decided by what th
 7. `docs/DEVELOPMENT_ROADMAP.md` — phased build plan with deliverables, exit criteria, and starting prompts (always for Full Path solutions)
 8. `docs/agents/architect.md` – Tactical Architect skill (always). Must include a **session-start sequence** and an **end-of-session write**, not just the escalation guide. Without them the TA cold-starts context-blind every session and its work never finds its way back here. See **Tactical Architect Session Lifecycle** below for what both contain
 9. `docs/agents/[other-roles].md` — other agent skills as needed
-10. `CLAUDE.md` – project context for the solution repo. Include a **Multi-Machine Sync** section (if the user works across multiple machines) and a **Memory Graduation** section (always) – see the entries of those names in `knowledge/lessons-learned.md` for both patterns and ready-to-adapt section text. When you write a Multi-Machine Sync section, also copy `scripts/sync.sh` from this repo into the solution repo and mark it executable – the section tells the reader to run it, so it has to exist. **If the solution has source data (item 0), add a short Source Data section too**: where it lives in the repo, that its README says which files are real, and that it is frozen – the project replaces that source, it does not extend it. Also copy the **Outside Services** section from this file verbatim, with the repo's own name in the User-Agent example – every repo's agent has the owner's email in context, and a rule that lives only here reaches no Tactical Architect
+10. `CLAUDE.md` – project context for the solution repo. Include a **Multi-Machine Sync** section (if the user works across multiple machines) and a **Memory Graduation** section (always) – see the entries of those names in `knowledge/lessons-learned.md` for both patterns and ready-to-adapt section text. When you write a Multi-Machine Sync section, also copy `scripts/sync.sh` from this repo into the solution repo and mark it executable – the section tells the reader to run it, so it has to exist. **If the solution has source data (item 0), add a short Source Data section too**: where it lives in the repo, that its README says which files are real, and that it is frozen – the project replaces that source, it does not extend it. Also copy the **Corrections Reach Every Copy**, **Fetching Pages and Driving a Browser** and **Outside Services** sections from this file verbatim, with the repo's own name in the User-Agent example. A rule that lives only in this workspace reaches no Tactical Architect: the agent making a fix reads its own repo's `CLAUDE.md`, never this one or `knowledge/lessons-learned.md`
 11. `README.md` — project overview
 12. `SETUP_GUIDE.md` — environment and tool setup
 13. `docs/DEV_LOG.md` — initialized with this session's summary
@@ -306,6 +306,40 @@ Escalation covers TA to Studio and back. This covers the other direction, which 
 The two-tier split is worth keeping, but only while it stays cheap to cross. When crossing it costs a full re-explanation each time, people stop coming to the Studio at all – and a Studio nobody visits goes stale, which makes its next answer worse. That failure is quiet and it compounds.
 
 If the user pushes back and says they want it handled here, do it here. The split is a default, not a rule you enforce against them.
+
+## Corrections Reach Every Copy
+
+A fix isn't done until the old text is gone everywhere it was copied. A recipe, command or claim that lives in a doc usually also lives in `--help` text, docstrings, error messages, the README and auto-memory, and fixing the doc fixes none of those.
+
+- **Grep the whole repo**, not the folders you expect it in, for what the old text actually says – the flag, the path, the status code – rather than for the name of its explanation. The terse restatements are the ones a sweep misses.
+- **It runs in both directions.** Doc wrong and code right, or doc right and code stale – the second feels finished the moment the doc is fixed, which is when the code copies get skipped.
+- **Fix `--help` and error branches first.** They are read exactly when someone is stuck and trusting what the program tells them.
+- **Rendered output is the only check that counts.** Run `--help`, trigger the error branch, print `__doc__`. Reading or scanning source is wrong in both directions: source can look right while the rendering is broken (a backslash continuation in a non-raw docstring is eaten silently), and a scan can flag source that renders perfectly (a docstring that escapes the backslash as `\\`). Raw strings (`r"""`) for shell commands in docstrings are still the safer habit. Triggering an error path can leave artifacts behind, so check for stray files afterward.
+- **Correct in place; don't file the correction beside the error.** Two live entries that disagree are worse than one stale one. Historical records – session logs, dated briefs, ADR context – are left alone and marked superseded instead.
+- **Put the rule where the fixer will read it.** A lesson recorded only in this workspace's `knowledge/` never reaches the agent doing the work in a solution repo. That is why item 10 copies this section into every generated `CLAUDE.md`.
+
+## Fetching Pages and Driving a Browser
+
+In this order, stopping at the first that works:
+
+1. **`WebFetch`.** If a site rejects it, retry with a desktop-browser User-Agent before concluding anything – many sites check only the header, and some answer a 404 rather than a 403. Confirm the payload contains something only the real page would; a bot-challenge page comes back as 200.
+2. **Playwright against the installed Chrome**, for pages that only exist after JavaScript runs: `p.chromium.launch(headless=True, channel="chrome")`. No extension, no browser download, and the user's open tabs are untouched. Read `inner_text("body")`, not the HTML.
+3. **CDP to a real Chrome**, for bulk runs or a page that needs a logged-in session. It means quitting Chrome, which closes the user's tabs – warn first.
+
+**Three different things with similar names.** The **Claude-in-Chrome extension** is a browser extension paired with a claude.ai login. **CDP** is Chrome's own DevTools websocket on a local port and needs nothing installed. **Playwright** is a library that launches or attaches to a browser. They are independent: an empty connected-browsers list says nothing about whether CDP works, and a task that needs CDP has no reason to install or debug the extension.
+
+The CDP launch that works on macOS:
+
+```bash
+pkill -x "Google Chrome"          # closes every tab – warn the user first
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9222 \
+  --user-data-dir=/tmp/chrome-cdp \
+  --no-first-run &
+curl -s http://localhost:9222/json/version   # must return JSON
+```
+
+Run the binary, not `open -a` – that often hands off to an existing Chrome that ignores the flags. `--user-data-dir` is required, or the debug port silently never opens. Use one profile directory consistently, since a login persists per directory. Connect with `p.chromium.connect_over_cdp("http://localhost:9222")`, and never call `browser.close()` on that connection – it closes the user's browser.
 
 ## Outside Services – Identify the Tool, Never the Person
 
